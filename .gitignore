@@ -1,0 +1,33 @@
+node_modules/
+.env
+.env.local
+.env.*.local
+
+# Next.js
+frontend/.next/
+frontend/out/
+
+# Uploads & generated files
+backend/uploads/*
+!backend/uploads/.gitkeep
+backend/templates/*
+!backend/templates/.gitkeep
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build outputs
+dist/
+build/
+
+# Misc
+.vercel
+*.pem
+
+# MSAL token cache (contains sensitive refresh tokens)
+backend/.msal-cache.json

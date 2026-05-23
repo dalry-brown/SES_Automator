@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-ChildItem -Recurse \"C:\\\\Users\\\\HP\\\\SES_Automator\" | Where-Object { !$_.PSIsContainer } | Select-Object -ExpandProperty FullName | Sort-Object)",
+      "PowerShell(docker --version 2>&1)",
+      "PowerShell(psql --version 2>&1)",
+      "PowerShell(New-Item -ItemType Directory -Force \"C:\\\\Users\\\\HP\\\\SES_Automator\\\\backend\\\\scripts\")",
+      "PowerShell(\"Done\")",
+      "PowerShell(npm info @microsoft/msal-browser version 2>&1)",
+      "PowerShell(npm search msal --json 2>&1)",
+      "PowerShell(npm view @azure/msal-browser version 2>&1)",
+      "Bash(npx next *)",
+      "Bash(node -e \"const p = require\\('./package.json'\\); console.log\\(JSON.stringify\\(p.scripts, null, 2\\)\\)\")",
+      "Bash(npm run *)",
+      "Bash(Start-Sleep -Seconds 4)",
+      "Bash(Get-Content \"C:\\\\Users\\\\HP\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-HP-SES-Automator\\\\4508cc3d-5eb6-4b1e-bf22-5c8a707949ce\\\\tasks\\\\bw88bupxw.output\")",
+      "PowerShell(Get-Process | Where-Object { $_.ProcessName -eq 'node' } | Select-Object Id, ProcessName, CPU)",
+      "PowerShell(Get-Process -Name \"node\" -ErrorAction SilentlyContinue)",
+      "PowerShell(Stop-Process -Force)"
+    ]
+  }
+}

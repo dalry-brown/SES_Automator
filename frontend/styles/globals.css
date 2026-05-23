@@ -1,0 +1,63 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  *, *::before, *::after { box-sizing: border-box; }
+  html { -webkit-font-smoothing: antialiased; }
+
+  body {
+    background: #f4f6f9;
+    color: #1c2b3a;
+    font-size: 14px;
+    line-height: 1.5;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    min-width: 960px;
+  }
+
+  ::-webkit-scrollbar              { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track        { background: transparent; }
+  ::-webkit-scrollbar-thumb        { background: #c3cad6; border-radius: 10px; }
+  ::-webkit-scrollbar-thumb:hover  { background: #9aa5b1; }
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+  /* CE table */
+  .ce-thead th {
+    @apply bg-ce-bg text-[11px] font-semibold text-ce-muted uppercase tracking-[0.5px] border-b border-ce-border text-left;
+    padding: 9px 12px;
+    white-space: nowrap;
+  }
+  .ce-tbody td {
+    @apply text-[13.5px] border-b border-ce-border align-middle overflow-hidden;
+    padding: 11px 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* Status pill cells must not clip — they contain inline-flex badges */
+  .ce-tbody td.ce-status-cell {
+    overflow: visible;
+    text-overflow: clip;
+  }
+  .ce-tbody tr:last-child td { border-bottom: none; }
+  .ce-row { @apply cursor-pointer transition-colors; }
+  .ce-row:hover { background: #f8fafc; }
+  .ce-row.selected { background: #eef3fb; }
+
+  /* CE navy thead */
+  .ce-thead-navy th {
+    background: #182f54;
+    color: white;
+    @apply text-[11px] font-semibold uppercase tracking-[0.5px] text-left;
+    padding: 9px 12px;
+    white-space: nowrap;
+  }
+
+  /* Duration chips */
+  .dur-ok   { @apply bg-green-50 text-green-700 text-[12px] font-semibold px-2 py-0.5 rounded-full inline-block whitespace-nowrap; }
+  .dur-warn { @apply bg-orange-50 text-orange-700 text-[12px] font-semibold px-2 py-0.5 rounded-full inline-block whitespace-nowrap; }
+  .dur-over { @apply bg-red-50 text-red-700 text-[12px] font-semibold px-2 py-0.5 rounded-full inline-block whitespace-nowrap; }
+}
