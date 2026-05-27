@@ -558,14 +558,22 @@ async function sendToVendor(workflowId, user, { toRecipients, ccRecipients } = {
     if (attRows[0]) fileName = attRows[0].file_name;
   }
 
-  const approvedAt = workflow.approvedAt
-    ? new Date(workflow.approvedAt).toUTCString().replace(/GMT$/, 'UTC')
-    : new Date().toUTCString().replace(/GMT$/, 'UTC');
+  const { rows: formRows } = await pool.query(
+    `SELECT fv.data FROM ses_forms sf
+     JOIN form_versions fv ON fv.form_id = sf.id
+     WHERE sf.workflow_id = $1
+     ORDER BY fv.version_number DESC LIMIT 1`,
+    [workflowId]
+  );
+  const enteredBy =
+    formRows[0]?.data?.forms?.[0]?.enteredBy ||
+    user.name ||
+    'Cost Engineer';
 
   const replyBody = `
-    <p>Hi Team,</p>
+    <p>Dear Team,</p>
     <p>Kindly find the attached approved SES for payment processing.</p>
-    <p>Best Regards,<br/>Tullow Cost Engineering</p>
+    <p>Best Regards,<br/>${enteredBy}</p>
   `;
 
   // Use custom recipients if the CE edited the list, otherwise fall back to reply-all defaults
