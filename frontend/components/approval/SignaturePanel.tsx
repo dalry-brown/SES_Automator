@@ -167,7 +167,7 @@ export function SignaturePanel({
   const status    = workflow.status;
   const isActionable = ['pending_approval', 'queried'].includes(status);
 
-  const isEditor = user?.role === 'editor';
+  const isEditor = user?.role === 'editor' || user?.role === 'admin';
   // Only the assigned CH (or admin) can sign/query/return/reroute
   const isCH = user?.role === 'admin' ||
     (user?.role === 'user' && workflow.contractHolderEmail === user.email);
