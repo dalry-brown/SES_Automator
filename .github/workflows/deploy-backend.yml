@@ -28,18 +28,18 @@ jobs:
 
       - name: Build and push Docker image
         run: |
-          docker build -t ${{ secrets.REGISTRY_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest ./backend
-          docker push ${{ secrets.REGISTRY_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest
+          docker build -t sesautomatoracr.azurecr.io/${{ env.IMAGE_NAME }}:latest ./backend
+          docker push sesautomatoracr.azurecr.io/${{ env.IMAGE_NAME }}:latest
 
       - name: Deploy to Azure Container Apps
         uses: azure/container-apps-deploy-action@v1
         with:
-          acrName: ${{ secrets.REGISTRY_NAME }}
+          acrName: sesautomatoracr
           acrUsername: ${{ secrets.REGISTRY_USERNAME }}
           acrPassword: ${{ secrets.REGISTRY_PASSWORD }}
           azureCredentials: ${{ secrets.AZURE_CREDENTIALS }}
           containerAppName: ses-automator-api
           resourceGroup: ses-automator-rg
-          imageToDeploy: ${{ secrets.REGISTRY_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest
+          imageToDeploy: sesautomatoracr.azurecr.io/${{ env.IMAGE_NAME }}:latest
           targetPort: 8080
           ingress: external
