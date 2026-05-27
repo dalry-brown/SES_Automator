@@ -12,6 +12,7 @@ backend/uploads/*
 !backend/uploads/.gitkeep
 backend/templates/*
 !backend/templates/.gitkeep
+!backend/templates/*.xlsx
 
 # Logs
 *.log
