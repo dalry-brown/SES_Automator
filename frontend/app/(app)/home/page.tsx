@@ -96,7 +96,7 @@ export default function HomePage() {
   const reviewCount   = emails.filter((e) => e.status === 'received').length;
   const approvalCount = wfs.filter((w) => w.status === 'pending_approval').length;
   const approvedCount = wfs.filter((w) => w.status === 'approved').length;
-  const sentCount     = wfs.filter((w) => w.status === 'sent').length;
+  const sentCount     = wfs.filter((w) => w.status === 'sent' || w.status === 'closed').length;
   const totalCount    = wfs.length;
 
   const groups = useMemo(() => {

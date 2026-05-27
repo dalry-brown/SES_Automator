@@ -344,3 +344,11 @@ ALTER TABLE workflows ADD COLUMN IF NOT EXISTS rerouted_to_name  TEXT;
 -- Add workflow_id to manual_items for thread linking
 ALTER TABLE manual_items ADD COLUMN IF NOT EXISTS workflow_id TEXT REFERENCES workflows(id) ON DELETE SET NULL;
 ALTER TABLE manual_items ADD COLUMN IF NOT EXISTS category TEXT;
+
+-- Add 'other' status (used when a workflow is assigned to the Others tracker)
+INSERT INTO statuses (code, label, description)
+  VALUES ('other', 'Other', 'Assigned to Others tracking')
+  ON CONFLICT (code) DO NOTHING;
+ALTER TABLE workflows DROP CONSTRAINT IF EXISTS workflows_status_check;
+ALTER TABLE workflows ADD CONSTRAINT workflows_status_check
+  CHECK (status IN ('received','in_progress','pending_approval','approved','sent','closed','queried','returned','cancelled','other'));
