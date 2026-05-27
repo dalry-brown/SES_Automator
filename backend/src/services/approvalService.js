@@ -6,7 +6,7 @@ const pool = require('../db/pool');
 const { camelizeRow, camelize } = require('../db/camelize');
 const { read, save } = require('./storageService');
 const { insertAttachment } = require('../db/queries/attachments');
-const { sendReplyAll, sendCustomReply, sendDirectEmail } = require('../graph/mail');
+const { sendReplyAll, sendCustomReply, sendDirectEmail, sendEmail } = require('../graph/mail');
 
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
@@ -576,19 +576,18 @@ async function sendToVendor(workflowId, user, { toRecipients, ccRecipients } = {
     <p>Best Regards,<br/>${enteredBy}</p>
   `;
 
-  // Use custom recipients if the CE edited the list, otherwise fall back to reply-all defaults
+  const { rows: subjectRows } = await pool.query(
+    `SELECT subject FROM thread_messages WHERE workflow_id = $1 ORDER BY received_at ASC LIMIT 1`,
+    [workflowId]
+  );
+  const subject = subjectRows[0]?.subject
+    ? `RE: ${subjectRows[0].subject}`
+    : `Approved SES Document - ${workflowId}`;
+
   const attachmentList = [{ name: fileName, contentType: 'application/pdf', buffer: signedBuffer }];
-  if (toRecipients && toRecipients.length > 0) {
-    await sendCustomReply(
-      threadRows[0].message_id,
-      replyBody,
-      attachmentList,
-      toRecipients,
-      ccRecipients || []
-    );
-  } else {
-    await sendReplyAll(threadRows[0].message_id, replyBody, attachmentList);
-  }
+  const allTo = (toRecipients && toRecipients.length > 0) ? toRecipients : [];
+  const allCc = ccRecipients || [];
+  await sendEmail(subject, replyBody, attachmentList, allTo, allCc);
 
   await pool.query(
     `UPDATE workflows SET status = 'sent', updated_at = NOW() WHERE id = $1`,

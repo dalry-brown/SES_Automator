@@ -144,4 +144,23 @@ async function sendDirectEmail(to, subject, htmlBody, attachments = []) {
   await axios.post(`${_baseUrl()}/sendMail`, { message, saveToSentItems: false }, { headers });
 }
 
-module.exports = { fetchEmail, fetchAttachmentList, downloadAttachment, sendReplyAll, sendCustomReply, sendDirectEmail };
+async function sendEmail(subject, htmlBody, attachments = [], toRecipients = [], ccRecipients = []) {
+  const headers = await _headers();
+  const message = {
+    subject,
+    body: { contentType: 'html', content: htmlBody },
+    toRecipients: toRecipients.map((r) => ({ emailAddress: { address: r.address, name: r.name || r.address } })),
+    ccRecipients: ccRecipients.map((r) => ({ emailAddress: { address: r.address, name: r.name || r.address } })),
+  };
+  if (attachments.length > 0) {
+    message.attachments = attachments.map(({ name, contentType, buffer }) => ({
+      '@odata.type': '#microsoft.graph.fileAttachment',
+      name,
+      contentType,
+      contentBytes: buffer.toString('base64'),
+    }));
+  }
+  await axios.post(`${_baseUrl()}/sendMail`, { message, saveToSentItems: true }, { headers });
+}
+
+module.exports = { fetchEmail, fetchAttachmentList, downloadAttachment, sendReplyAll, sendCustomReply, sendDirectEmail, sendEmail };
