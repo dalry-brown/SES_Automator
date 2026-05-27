@@ -85,8 +85,21 @@ export default function OthersPage() {
     }
   };
 
+  const allItems = data?.items ?? [];
+  const openCount   = allItems.filter((i) => i.status === 'open').length;
+  const closedCount = allItems.filter((i) => i.status === 'closed').length;
+
+  const countsByType = useMemo(() => {
+    const base = allItems.filter((i) => i.status === tab);
+    const counts: Record<string, number> = { all: base.length };
+    for (const t of OTHERS_TYPES) {
+      counts[t.key] = base.filter((i) => (i.category ?? 'other').toLowerCase() === t.key).length;
+    }
+    return counts;
+  }, [allItems, tab]);
+
   const items = useMemo(() => {
-    let list = (data?.items ?? []).filter((i) => i.status === tab);
+    let list = allItems.filter((i) => i.status === tab);
     if (typeFilter !== 'all') {
       list = list.filter((i) => (i.category ?? 'other').toLowerCase() === typeFilter);
     }
@@ -102,23 +115,9 @@ export default function OthersPage() {
       );
     }
     return list;
-  }, [data, tab, typeFilter, search]);
+  }, [allItems, tab, typeFilter, search]);
 
   if (isLoading) return <PageSpinner />;
-
-  const allItems = data?.items ?? [];
-  const openCount   = allItems.filter((i) => i.status === 'open').length;
-  const closedCount = allItems.filter((i) => i.status === 'closed').length;
-
-  // Count per type for current tab
-  const countsByType = useMemo(() => {
-    const base = allItems.filter((i) => i.status === tab);
-    const counts: Record<string, number> = { all: base.length };
-    for (const t of OTHERS_TYPES) {
-      counts[t.key] = base.filter((i) => (i.category ?? 'other').toLowerCase() === t.key).length;
-    }
-    return counts;
-  }, [allItems, tab]);
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
