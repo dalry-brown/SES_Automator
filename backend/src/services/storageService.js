@@ -58,12 +58,12 @@ async function serveAttachment(attachmentId, res) {
 
   if (STORAGE_MODE === 'azure') {
     const blobClient = _containerClient().getBlockBlobClient(attachment.storageKey);
-    const expiry = new Date(Date.now() + 60 * 60 * 1000);
-    const sas = await blobClient.generateSasUrl({
-      permissions: 'r',
-      expiresOn: expiry,
-    });
-    res.redirect(sas);
+    const download = await blobClient.download(0);
+    const asciiFallback = attachment.fileName.replace(/[^\x20-\x7E]/g, '_');
+    const encoded = encodeURIComponent(attachment.fileName);
+    res.setHeader('Content-Type', attachment.mimeType || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="${asciiFallback}"; filename*=UTF-8''${encoded}`);
+    download.readableStreamBody.pipe(res);
     return;
   }
 
