@@ -340,3 +340,7 @@ ALTER TABLE approval_events ADD COLUMN IF NOT EXISTS rerouted_to_name  TEXT;
 -- Track the active contract holder even after re-routing
 ALTER TABLE workflows ADD COLUMN IF NOT EXISTS rerouted_to_email TEXT;
 ALTER TABLE workflows ADD COLUMN IF NOT EXISTS rerouted_to_name  TEXT;
+
+-- Add workflow_id to manual_items for thread linking
+ALTER TABLE manual_items ADD COLUMN IF NOT EXISTS workflow_id TEXT REFERENCES workflows(id) ON DELETE SET NULL;
+ALTER TABLE manual_items ADD COLUMN IF NOT EXISTS category TEXT;

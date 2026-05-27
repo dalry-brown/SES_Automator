@@ -60,7 +60,7 @@ async function serveAttachment(attachmentId, res) {
     const blobClient = _containerClient().getBlockBlobClient(attachment.storageKey);
     const expiry = new Date(Date.now() + 60 * 60 * 1000);
     const sas = await blobClient.generateSasUrl({
-      permissions: { read: true },
+      permissions: 'r',
       expiresOn: expiry,
     });
     res.redirect(sas);
