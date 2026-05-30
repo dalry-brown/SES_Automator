@@ -72,7 +72,7 @@ export function getMsalConfig() {
   };
 }
 
-export const MS_SCOPES = ['User.Read', 'Mail.Read', 'Mail.Send'];
+export const MS_SCOPES = ['User.Read'];
 
 // ── MSAL singleton ────────────────────────────────────────────────────────────
 let _msalInstance: PublicClientApplication | null = null;
