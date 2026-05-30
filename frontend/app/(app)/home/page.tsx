@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search, BarChart2, FileText, ExternalLink, ChevronRight, Mail } from 'lucide-react';
+import { Search, BarChart2, FileText, ExternalLink, ChevronRight, Mail, Pencil } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { emailsApi, attachmentsApi, othersApi, workflowsApi } from '@/lib/api';
 import { useQueryClient } from '@tanstack/react-query';
@@ -249,6 +249,15 @@ export default function HomePage() {
                     const isMulti  = group.messages.length > 1;
                     const isSelWf  = selected?.workflowId === group.workflowId;
 
+                    const wf = wfs.find((w) => w.id === group.workflowId);
+                    const lockAgeMin = wf?.lockedAt
+                      ? (Date.now() - new Date(wf.lockedAt).getTime()) / 60000
+                      : 999;
+                    const isBeingEdited = !!wf?.lockedBy && lockAgeMin < 15;
+                    const editorName = isBeingEdited
+                      ? (wf?.lockedByName ?? wf?.lockedByEmail ?? 'Someone')
+                      : null;
+
                     return (
                       <div key={group.workflowId}>
                         {/* Parent row */}
@@ -283,6 +292,15 @@ export default function HomePage() {
                               {isMulti && (
                                 <span className="flex-shrink-0 bg-ce-navy/10 text-ce-navy text-[11px] font-semibold px-1.5 py-0.5 rounded-full">
                                   {group.messages.length}
+                                </span>
+                              )}
+                              {isBeingEdited && (
+                                <span
+                                  title={`${editorName} is creating the SES form`}
+                                  className="flex-shrink-0 flex items-center gap-1 bg-amber-100 text-amber-700 text-[11px] font-semibold px-1.5 py-0.5 rounded-full"
+                                >
+                                  <Pencil size={9} />
+                                  In progress
                                 </span>
                               )}
                             </div>
