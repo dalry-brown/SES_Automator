@@ -1,13 +1,31 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { getMsalInstance, MS_SCOPES } from '@/lib/auth';
+import { useAuth } from '@/components/providers/AuthProvider';
 import { Button } from '@/components/ui/Button';
+import { Spinner } from '@/components/ui/Spinner';
 import { useToast } from '@/components/ui/Toast';
 
 export default function LoginPage() {
+  const { isAuthenticated, isLoading: authLoading } = useAuth();
+  const router = useRouter();
   const [loading, setLoading] = useState(false);
   const { error: toastError } = useToast();
+
+  // If AuthProvider is finishing an MSAL redirect, or user is already logged in, redirect to home.
+  useEffect(() => {
+    if (!authLoading && isAuthenticated) router.replace('/home');
+  }, [authLoading, isAuthenticated, router]);
+
+  if (authLoading || isAuthenticated) {
+    return (
+      <div style={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', background: '#182f54' }}>
+        <Spinner size="lg" light />
+      </div>
+    );
+  }
 
   const handleMsLogin = async () => {
     setLoading(true);
