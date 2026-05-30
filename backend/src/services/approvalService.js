@@ -576,18 +576,16 @@ async function sendToVendor(workflowId, user, { toRecipients, ccRecipients } = {
     <p>Best Regards,<br/>${enteredBy}</p>
   `;
 
-  const { rows: subjectRows } = await pool.query(
-    `SELECT subject FROM thread_messages WHERE workflow_id = $1 ORDER BY received_at ASC LIMIT 1`,
-    [workflowId]
-  );
-  const subject = subjectRows[0]?.subject
-    ? `RE: ${subjectRows[0].subject}`
-    : `Approved SES Document - ${workflowId}`;
-
   const attachmentList = [{ name: fileName, contentType: 'application/pdf', buffer: signedBuffer }];
-  const allTo = (toRecipients && toRecipients.length > 0) ? toRecipients : [];
-  const allCc = ccRecipients || [];
-  await sendEmail(subject, replyBody, attachmentList, allTo, allCc);
+  // Reply to the original vendor email so the response is in the same thread.
+  // POST /messages/{id}/replyAll only requires Mail.Send — no Mail.ReadWrite needed.
+  await sendReplyAll(
+    threadRows[0].message_id,
+    replyBody,
+    attachmentList,
+    toRecipients || [],
+    ccRecipients || [],
+  );
 
   await pool.query(
     `UPDATE workflows SET status = 'sent', updated_at = NOW() WHERE id = $1`,
