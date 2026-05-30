@@ -2,24 +2,33 @@
 
 import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search, FileText } from 'lucide-react';
+import { Search, FileText, BookOpen, Pencil } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { emailsApi, attachmentsApi, othersApi, workflowsApi } from '@/lib/api';
 import { useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/components/ui/Toast';
+import { useWorkflows } from '@/lib/hooks/useWorkflows';
 import { SplitPanel, PanelHeader, PanelBody, PanelFooter, PanelSection, MetaRow, PanelEmpty } from '@/components/ui/SplitPanel';
 import { AttachmentChip, AttachmentSidebarView } from '@/components/ui/AttachmentPreview';
 import { PageSpinner } from '@/components/ui/Spinner';
-import { formatDate, formatDateTime, daysSince, cn } from '@/lib/utils';
+import { formatDate, formatDateTime, formatDraftEditor, daysSince, cn } from '@/lib/utils';
 import type { ThreadMessage, Attachment } from '@/types';
 
 const ASSIGN_TYPES = ['Change order', 'PO top-up', 'PR', 'General enquiry', 'AP', 'Other'];
+
+type FilterKey = 'all' | 'draft' | 'in_progress';
+const FILTERS: { key: FilterKey; label: string }[] = [
+  { key: 'all',         label: 'All' },
+  { key: 'draft',       label: 'Drafts' },
+  { key: 'in_progress', label: 'In progress' },
+];
 
 export default function InboxPage() {
   const router = useRouter();
   const qc = useQueryClient();
   const { success, error: toastError } = useToast();
   const [search, setSearch]         = useState('');
+  const [filter, setFilter]         = useState<FilterKey>('all');
   const [selected, setSelected]     = useState<ThreadMessage | null>(null);
   const [previewAtt, setPreviewAtt] = useState<Attachment | null>(null);
   const [assigning, setAssigning]   = useState(false);
@@ -29,6 +38,8 @@ export default function InboxPage() {
     queryFn:  () => emailsApi.list(),
     refetchInterval: 60_000,
   });
+  const { data: wfData } = useWorkflows();
+  const wfs = wfData ?? [];
 
   const { data: attData } = useQuery({
     queryKey: ['attachments', 'workflow', selected?.workflowId],
@@ -38,17 +49,33 @@ export default function InboxPage() {
   const attachments: Attachment[] = attData?.attachments ?? [];
 
   const emails = useMemo(() => {
-    const all = (data?.emails ?? []).filter((e) => e.status === 'received');
-    if (!search.trim()) return all;
-    const q = search.toLowerCase();
-    return all.filter(
-      (e) =>
-        e.subject?.toLowerCase().includes(q) ||
-        e.senderEmail?.toLowerCase().includes(q) ||
-        e.senderName?.toLowerCase().includes(q) ||
-        e.supplierName?.toLowerCase().includes(q),
-    );
-  }, [data, search]);
+    let list = (data?.emails ?? []).filter((e) => e.status === 'received');
+
+    if (filter === 'draft') {
+      list = list.filter((e) => {
+        const wf = wfs.find((w) => w.id === e.workflowId);
+        return !!wf?.hasDraft;
+      });
+    } else if (filter === 'in_progress') {
+      list = list.filter((e) => {
+        const wf = wfs.find((w) => w.id === e.workflowId);
+        if (!wf?.lockedBy || !wf.lockedAt) return false;
+        return (Date.now() - new Date(wf.lockedAt).getTime()) / 60000 < 15;
+      });
+    }
+
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      list = list.filter(
+        (e) =>
+          e.subject?.toLowerCase().includes(q) ||
+          e.senderEmail?.toLowerCase().includes(q) ||
+          e.senderName?.toLowerCase().includes(q) ||
+          e.supplierName?.toLowerCase().includes(q),
+      );
+    }
+    return list;
+  }, [data, wfs, filter, search]);
 
   if (isLoading) return <PageSpinner />;
 
@@ -101,6 +128,7 @@ export default function InboxPage() {
         maxSideW={720}
         main={
           <>
+            {/* Header */}
             <div className="px-5 py-3.5 border-b border-ce-border flex items-center justify-between flex-shrink-0 bg-white">
               <div>
                 <div className="text-[16px] font-semibold text-ce-navy">Pending review</div>
@@ -119,12 +147,31 @@ export default function InboxPage() {
               </div>
             </div>
 
+            {/* Filter pills */}
+            <div className="px-5 py-2 border-b border-ce-border flex gap-1.5 flex-shrink-0 bg-white">
+              {FILTERS.map((f) => (
+                <button
+                  key={f.key}
+                  onClick={() => setFilter(f.key)}
+                  className={cn(
+                    'px-3 py-1 rounded-full text-[12px] font-medium border transition-all',
+                    filter === f.key
+                      ? 'bg-ce-navy text-white border-ce-navy'
+                      : 'bg-white text-ce-muted border-ce-border hover:border-ce-border2 hover:text-ce-text',
+                  )}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Table */}
             <div className="flex-1 overflow-auto">
               <table className="w-full border-collapse" style={{ tableLayout: 'fixed' }}>
                 <thead className="ce-thead">
                   <tr>
-                    <th style={{ width: 150 }}>Workflow ID</th>
-                    <th style={{ width: 180 }}>Sender</th>
+                    <th style={{ width: 200 }}>Workflow ID</th>
+                    <th style={{ width: 160 }}>Sender</th>
                     <th>Subject</th>
                     <th style={{ width: 130 }}>Date &amp; time</th>
                   </tr>
@@ -137,23 +184,47 @@ export default function InboxPage() {
                       </td>
                     </tr>
                   )}
-                  {emails.map((email) => (
-                    <tr
-                      key={email.id}
-                      className={cn('ce-row', selected?.id === email.id && 'selected')}
-                      onClick={() => handleSelect(email)}
-                    >
-                      <td className="font-semibold text-ce-navy">
-                        {email.workflowId ?? '—'}
-                      </td>
-                      <td className="text-ce-muted text-[12px]">{email.senderEmail || '—'}</td>
-                      <td>{email.subject || '(no subject)'}</td>
-                      <td>
-                        <div className="text-[13px]">{formatDate(email.receivedAt, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</div>
-                        <div className="text-[11.5px] text-ce-hint">{relTime(email.receivedAt)}</div>
-                      </td>
-                    </tr>
-                  ))}
+                  {emails.map((email) => {
+                    const wf = wfs.find((w) => w.id === email.workflowId);
+                    const lockAgeMin = wf?.lockedAt
+                      ? (Date.now() - new Date(wf.lockedAt).getTime()) / 60000
+                      : 999;
+                    const isBeingEdited = !!wf?.lockedBy && lockAgeMin < 15;
+                    const isDraft = !!wf?.hasDraft && !isBeingEdited;
+                    const draftEditor = formatDraftEditor(wf?.draftEditorName ?? null);
+
+                    return (
+                      <tr
+                        key={email.id}
+                        className={cn('ce-row', selected?.id === email.id && 'selected')}
+                        onClick={() => handleSelect(email)}
+                      >
+                        <td>
+                          <div className="font-semibold text-ce-navy text-[12px] font-mono">
+                            {email.workflowId ?? '—'}
+                          </div>
+                          {isDraft && (
+                            <span className="inline-flex items-center gap-1 mt-0.5 bg-sky-50 text-sky-600 border border-sky-200 text-[10.5px] font-semibold px-1.5 py-0.5 rounded-full">
+                              <BookOpen size={9} />
+                              Draft{draftEditor ? ` · ${draftEditor}` : ''}
+                            </span>
+                          )}
+                          {isBeingEdited && (
+                            <span className="inline-flex items-center gap-1 mt-0.5 bg-amber-100 text-amber-700 text-[10.5px] font-semibold px-1.5 py-0.5 rounded-full">
+                              <Pencil size={9} />
+                              In progress · {wf?.lockedByName?.split(' ')[0] ?? 'Someone'}
+                            </span>
+                          )}
+                        </td>
+                        <td className="text-ce-muted text-[12px]">{email.senderEmail || '—'}</td>
+                        <td>{email.subject || '(no subject)'}</td>
+                        <td>
+                          <div className="text-[13px]">{formatDate(email.receivedAt, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</div>
+                          <div className="text-[11.5px] text-ce-hint">{relTime(email.receivedAt)}</div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -171,7 +242,6 @@ export default function InboxPage() {
                 onPopout={selected.workflowId ? handlePopout : undefined}
               />
 
-              {/* When an attachment is selected, replace body with inline viewer */}
               {previewAtt ? (
                 <AttachmentSidebarView
                   attachment={previewAtt}

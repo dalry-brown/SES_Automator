@@ -27,6 +27,13 @@ export function daysSince(dateStr: string | null | undefined): number | null {
   return Math.floor((Date.now() - new Date(dateStr).getTime()) / 86_400_000);
 }
 
+export function formatDraftEditor(name: string | null | undefined): string {
+  if (!name) return '';
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 1) return parts[0];
+  return `${parts[0]}.${parts[parts.length - 1]}`;
+}
+
 export function truncate(str: string | null | undefined, max = 40) {
   if (!str) return '—';
   return str.length <= max ? str : str.slice(0, max - 1) + '…';

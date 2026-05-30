@@ -12,7 +12,7 @@ import { StatusPill } from '@/components/ui/StatusPill';
 import { SplitPanel, PanelHeader, PanelBody, PanelFooter, PanelSection, MetaRow, PanelEmpty } from '@/components/ui/SplitPanel';
 import { AttachmentChip, AttachmentSidebarView } from '@/components/ui/AttachmentPreview';
 import { PageSpinner } from '@/components/ui/Spinner';
-import { formatDateTime, formatDate, cn } from '@/lib/utils';
+import { formatDateTime, formatDate, formatDraftEditor, cn } from '@/lib/utils';
 import type { ThreadMessage, WorkflowStatus, Attachment } from '@/types';
 
 type FilterKey = 'all' | 'draft' | WorkflowStatus;
@@ -27,12 +27,6 @@ const FILTERS: { key: FilterKey; label: string }[] = [
   { key: 'closed',           label: 'Closed' },
 ];
 
-function formatDraftEditor(name: string | null): string {
-  if (!name) return '';
-  const parts = name.trim().split(/\s+/);
-  if (parts.length === 1) return parts[0];
-  return `${parts[0]}.${parts[parts.length - 1]}`;
-}
 
 const ASSIGN_TYPES = ['Change order', 'PO top-up', 'PR', 'General enquiry', 'AP', 'Other'];
 

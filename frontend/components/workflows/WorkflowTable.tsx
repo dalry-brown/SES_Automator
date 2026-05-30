@@ -5,15 +5,9 @@ import { AlertCircle, BookOpen } from 'lucide-react';
 import { Table } from '@/components/ui/Table';
 import { StatusBadge } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { formatCurrency, formatDate, daysSince } from '@/lib/utils';
+import { formatCurrency, formatDate, formatDraftEditor, daysSince } from '@/lib/utils';
 import type { Workflow } from '@/types';
 
-function formatDraftEditor(name: string | null): string {
-  if (!name) return '';
-  const parts = name.trim().split(/\s+/);
-  if (parts.length === 1) return parts[0];
-  return `${parts[0]}.${parts[parts.length - 1]}`;
-}
 
 interface WorkflowTableProps {
   workflows: Workflow[];
