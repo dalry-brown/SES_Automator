@@ -1,12 +1,19 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, BookOpen } from 'lucide-react';
 import { Table } from '@/components/ui/Table';
 import { StatusBadge } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { formatCurrency, formatDate, daysSince } from '@/lib/utils';
 import type { Workflow } from '@/types';
+
+function formatDraftEditor(name: string | null): string {
+  if (!name) return '';
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 1) return parts[0];
+  return `${parts[0]}.${parts[parts.length - 1]}`;
+}
 
 interface WorkflowTableProps {
   workflows: Workflow[];
@@ -26,6 +33,20 @@ function LockDot({ workflow }: { workflow: Workflow }) {
       title={`Being edited by ${workflow.lockedByName ?? workflow.lockedByEmail}`}
       className="ml-1.5 inline-block h-2 w-2 rounded-full bg-red-500 ring-2 ring-red-100"
     />
+  );
+}
+
+function DraftBadge({ workflow }: { workflow: Workflow }) {
+  if (!workflow.hasDraft || workflow.status !== 'received') return null;
+  const editor = formatDraftEditor(workflow.draftEditorName);
+  return (
+    <span
+      title={`Draft saved by ${workflow.draftEditorName ?? 'a cost engineer'}`}
+      className="ml-2 inline-flex items-center gap-1 bg-sky-50 text-sky-600 border border-sky-200 text-[10.5px] font-semibold px-1.5 py-0.5 rounded-full"
+    >
+      <BookOpen size={9} />
+      Draft{editor ? ` · ${editor}` : ''}
+    </span>
   );
 }
 
@@ -62,6 +83,7 @@ export function WorkflowTable({ workflows, emptyTitle, emptyDescription, showCon
         <span className="flex items-center font-mono text-xs font-semibold text-brand-sky">
           {w.id}
           <LockDot workflow={w} />
+          <DraftBadge workflow={w} />
         </span>
       ),
     },

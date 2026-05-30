@@ -51,6 +51,9 @@ export interface Workflow {
   lockedAt: string | null;
   reroutedToEmail: string | null;
   reroutedToName: string | null;
+  hasDraft: boolean;
+  draftEditorName: string | null;
+  draftEditorEmail: string | null;
   createdAt: string;
   updatedAt: string;
 }

@@ -11,10 +11,19 @@ async function listWorkflows(user) {
        w.*,
        s.label AS status_label,
        lock_user.name  AS locked_by_name,
-       lock_user.email AS locked_by_email
+       lock_user.email AS locked_by_email,
+       (sf.id IS NOT NULL)  AS has_draft,
+       draft_user.name  AS draft_editor_name,
+       draft_user.email AS draft_editor_email
      FROM workflows w
-     LEFT JOIN statuses s   ON s.code   = w.status
-     LEFT JOIN users lock_user ON lock_user.id = w.locked_by
+     LEFT JOIN statuses s        ON s.code        = w.status
+     LEFT JOIN users lock_user   ON lock_user.id  = w.locked_by
+     LEFT JOIN ses_forms sf      ON sf.workflow_id = w.id
+     LEFT JOIN users draft_user  ON draft_user.id = (
+       SELECT fv.created_by FROM form_versions fv
+       WHERE fv.form_id = sf.id
+       ORDER BY fv.version_number DESC LIMIT 1
+     )
      ${where}
      ORDER BY w.created_at DESC`,
     params

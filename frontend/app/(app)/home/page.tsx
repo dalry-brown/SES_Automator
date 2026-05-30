@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search, BarChart2, FileText, ExternalLink, ChevronRight, Mail, Pencil } from 'lucide-react';
+import { Search, BarChart2, FileText, ExternalLink, ChevronRight, Mail, Pencil, BookOpen } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { emailsApi, attachmentsApi, othersApi, workflowsApi } from '@/lib/api';
 import { useQueryClient } from '@tanstack/react-query';
@@ -15,16 +15,24 @@ import { PageSpinner } from '@/components/ui/Spinner';
 import { formatDateTime, formatDate, cn } from '@/lib/utils';
 import type { ThreadMessage, WorkflowStatus, Attachment } from '@/types';
 
-type FilterKey = 'all' | WorkflowStatus;
+type FilterKey = 'all' | 'draft' | WorkflowStatus;
 
 const FILTERS: { key: FilterKey; label: string }[] = [
   { key: 'all',              label: 'All' },
   { key: 'received',         label: 'Pending review' },
+  { key: 'draft',            label: 'Drafts' },
   { key: 'pending_approval', label: 'Pending approval' },
   { key: 'approved',         label: 'Approved' },
   { key: 'sent',             label: 'Sent' },
   { key: 'closed',           label: 'Closed' },
 ];
+
+function formatDraftEditor(name: string | null): string {
+  if (!name) return '';
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 1) return parts[0];
+  return `${parts[0]}.${parts[parts.length - 1]}`;
+}
 
 const ASSIGN_TYPES = ['Change order', 'PO top-up', 'PR', 'General enquiry', 'AP', 'Other'];
 
@@ -101,7 +109,14 @@ export default function HomePage() {
 
   const groups = useMemo(() => {
     let list = emails;
-    if (filter !== 'all') list = list.filter((e) => e.status === filter);
+    if (filter === 'draft') {
+      list = list.filter((e) => {
+        const wf = wfs.find((w) => w.id === e.workflowId);
+        return wf?.hasDraft && wf.status === 'received';
+      });
+    } else if (filter !== 'all') {
+      list = list.filter((e) => e.status === filter);
+    }
     if (search.trim()) {
       const q = search.toLowerCase();
       list = list.filter(
@@ -257,6 +272,8 @@ export default function HomePage() {
                     const editorName = isBeingEdited
                       ? (wf?.lockedByName ?? wf?.lockedByEmail ?? 'Someone')
                       : null;
+                    const isDraft = !!wf?.hasDraft && wf.status === 'received';
+                    const draftEditor = isDraft ? formatDraftEditor(wf?.draftEditorName ?? null) : null;
 
                     return (
                       <div key={group.workflowId}>
@@ -292,6 +309,15 @@ export default function HomePage() {
                               {isMulti && (
                                 <span className="flex-shrink-0 bg-ce-navy/10 text-ce-navy text-[11px] font-semibold px-1.5 py-0.5 rounded-full">
                                   {group.messages.length}
+                                </span>
+                              )}
+                              {isDraft && !isBeingEdited && (
+                                <span
+                                  title={`Draft saved by ${wf?.draftEditorName ?? 'a cost engineer'}`}
+                                  className="flex-shrink-0 flex items-center gap-1 bg-sky-50 text-sky-600 border border-sky-200 text-[11px] font-semibold px-1.5 py-0.5 rounded-full"
+                                >
+                                  <BookOpen size={9} />
+                                  Draft{draftEditor ? ` · ${draftEditor}` : ''}
                                 </span>
                               )}
                               {isBeingEdited && (
