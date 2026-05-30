@@ -27,6 +27,8 @@ export function useSesMutations(formId?: string) {
     mutationFn: ({ id, fields }: { id: string; fields: SesFields }) => sesApi.update(id, fields),
     onSuccess: () => {
       if (formId) qc.invalidateQueries({ queryKey: ['ses', formId] });
+      // Refresh workflow list so hasDraft / draftEditorName updates on the inbox cards
+      qc.invalidateQueries({ queryKey: ['workflows'] });
     },
   });
 

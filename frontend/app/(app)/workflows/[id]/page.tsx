@@ -191,7 +191,7 @@ export default function SesFormPage() {
     ? (Date.now() - new Date(workflow.lockedAt).getTime()) / 60000 > 15
     : true;
   const lockedByName  = lockedByOther && !lockExpired
-    ? (workflow.lockedByName ?? workflow.lockedByEmail ?? undefined)
+    ? (workflow.lockedByName ?? workflow.lockedByEmail ?? 'Someone')
     : undefined;
 
   // Form is read-only when workflow status is in the read-only set, OR another
