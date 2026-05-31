@@ -9,15 +9,36 @@ import type {
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
 // ── Base fetch ────────────────────────────────────────────────────────────────
-async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+interface ApiFetchOptions extends RequestInit {
+  timeoutMs?: number; // default 30 s; use 0 to disable
+}
+
+async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): Promise<T> {
+  const { timeoutMs = 30_000, ...fetchOptions } = options;
   const token = getStoredToken();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...(options.headers as Record<string, string>),
+    ...(fetchOptions.headers as Record<string, string>),
   };
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  const res = await fetch(`${API}${path}`, { ...options, headers });
+  const controller = new AbortController();
+  let timerId: ReturnType<typeof setTimeout> | undefined;
+  if (timeoutMs > 0) {
+    timerId = setTimeout(() => controller.abort('timeout'), timeoutMs);
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(`${API}${path}`, { ...fetchOptions, headers, signal: controller.signal });
+  } catch (err: unknown) {
+    if ((err as Error)?.name === 'AbortError' || String(err).includes('timeout')) {
+      throw new Error('Request timed out — the server is still processing. Please wait a moment and refresh.');
+    }
+    throw err;
+  } finally {
+    if (timerId) clearTimeout(timerId);
+  }
 
   if (res.status === 401) {
     clearToken();
@@ -52,6 +73,8 @@ export const workflowsApi = {
   markSent:       (id: string) => apiFetch<{ workflow: Workflow }>(`/api/workflows/${id}/mark-sent`, { method: 'POST' }),
   close:          (id: string) => apiFetch<{ workflow: Workflow }>(`/api/workflows/${id}/close`, { method: 'POST' }),
   getMessages:    (id: string) => apiFetch<{ messages: ThreadMessage[] }>(`/api/workflows/${id}/messages`),
+  markRead:       (id: string) => apiFetch<{ ok: boolean }>(`/api/workflows/${id}/mark-read`, { method: 'POST' }),
+  replyToVendor:  (id: string, comment: string) => apiFetch<{ message: string }>(`/api/workflows/${id}/reply`, { method: 'POST', body: JSON.stringify({ comment }) }),
 };
 
 // ── Emails / Inbox ────────────────────────────────────────────────────────────
@@ -143,7 +166,7 @@ export const approvalApi = {
   sign: (workflowId: string, signatureDataUrl?: string) =>
     apiFetch<{ message: string; workflowId: string; docHash: string }>(
       `/api/approval/${workflowId}/sign`,
-      { method: 'POST', body: JSON.stringify({ confirmed: true, signatureDataUrl: signatureDataUrl ?? null }) }
+      { method: 'POST', body: JSON.stringify({ confirmed: true, signatureDataUrl: signatureDataUrl ?? null }), timeoutMs: 180_000 }
     ),
 
   comment: (workflowId: string, comment: string) =>
@@ -177,14 +200,14 @@ export const approvalApi = {
     ),
 
   getRecipients: (workflowId: string) =>
-    apiFetch<{ toRecipients: { name: string; address: string }[]; ccRecipients: { name: string; address: string }[] }>(
+    apiFetch<{ toRecipients: { name: string; address: string }[]; ccRecipients: { name: string; address: string }[]; defaultBody: string }>(
       `/api/approval/${workflowId}/recipients`
     ),
 
-  sendToVendor: (workflowId: string, recipients: { toRecipients: { name: string; address: string }[]; ccRecipients: { name: string; address: string }[] }) =>
+  sendToVendor: (workflowId: string, params: { toRecipients: { name: string; address: string }[]; ccRecipients: { name: string; address: string }[]; body?: string }) =>
     apiFetch<{ message: string; workflowId: string }>(
       `/api/approval/${workflowId}/send-to-vendor`,
-      { method: 'POST', body: JSON.stringify(recipients) }
+      { method: 'POST', body: JSON.stringify(params), timeoutMs: 180_000 }
     ),
 };
 

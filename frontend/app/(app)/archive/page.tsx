@@ -127,7 +127,7 @@ export default function ArchivePage() {
                         </td>
                         <td>
                           <button
-                            onClick={(e) => { e.stopPropagation(); router.push(`/workflows/${wf.id}`); }}
+                            onClick={(e) => { e.stopPropagation(); router.push(`/workflows/${wf.id}?from=/archive`); }}
                             className="inline-flex items-center gap-1 bg-white border border-ce-border text-[12px] text-ce-muted px-2 py-1 rounded-lg hover:bg-ce-bg cursor-pointer transition-colors"
                           >
                             <Eye size={11} /> View
@@ -166,7 +166,7 @@ export default function ArchivePage() {
               </PanelBody>
               <PanelFooter>
                 <button
-                  onClick={() => router.push(`/workflows/${selected.id}`)}
+                  onClick={() => router.push(`/workflows/${selected.id}?from=/archive`)}
                   className="w-full bg-white border border-ce-border text-[13px] font-medium py-2 rounded-lg text-ce-muted hover:bg-ce-bg transition-colors flex items-center justify-center gap-1.5"
                 >
                   <Eye size={13} /> View SES record

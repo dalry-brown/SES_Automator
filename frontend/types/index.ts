@@ -54,6 +54,7 @@ export interface Workflow {
   hasDraft: boolean;
   draftEditorName: string | null;
   draftEditorEmail: string | null;
+  hasNewMessage: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -266,6 +267,8 @@ export interface ThreadMessage {
   supplierName: string | null;
   status: WorkflowStatus;
   statusLabel: string;
+  isNew: boolean;
+  isOutbound: boolean;
 }
 
 // ── Admin ─────────────────────────────────────────────────────────────────────

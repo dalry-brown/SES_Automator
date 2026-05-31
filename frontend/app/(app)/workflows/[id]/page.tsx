@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertCircle, CheckCircle, Clock, RotateCcw, XCircle, Lock as LockIcon } from 'lucide-react';
 import { useWorkflow, useWorkflowMutations } from '@/lib/hooks/useWorkflows';
@@ -11,7 +11,7 @@ import { SesFormPanel } from '@/components/ses/SesFormPanel';
 import { PageSpinner } from '@/components/ui/Spinner';
 import { useToast } from '@/components/ui/Toast';
 import { useAuth } from '@/components/providers/AuthProvider';
-import { cn } from '@/lib/utils';
+import { cn, inferBackHref } from '@/lib/utils';
 import type { WorkflowStatus } from '@/types';
 
 // ── Statuses where the form must be read-only ─────────────────────────────────
@@ -129,6 +129,7 @@ export default function SesFormPage() {
   const { user } = useAuth();
   const { error: toastError, success } = useToast();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const qc = useQueryClient();
   const [creating, setCreating] = useState(false);
 
@@ -201,10 +202,14 @@ export default function SesFormPage() {
   const isReadOnly     = statusReadOnly || lockReadOnly;
 
   // CH role: redirect straight to approval page for pending/approved workflows
+  // Preserve ?from= so the approval page back button knows where to go
   if (user?.role === 'user' && ['pending_approval', 'queried', 'approved', 'sent'].includes(workflow.status)) {
-    router.replace(`/workflows/${id}/approval`);
+    const from = searchParams.get('from');
+    router.replace(`/workflows/${id}/approval${from ? `?from=${encodeURIComponent(from)}` : ''}`);
     return <PageSpinner />;
   }
+
+  const backHref = searchParams.get('from') ?? inferBackHref(workflow.status);
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
@@ -238,7 +243,7 @@ export default function SesFormPage() {
           qc.invalidateQueries({ queryKey: ['workflows'] });
           router.replace(`/workflows/${id}`);
         }}
-        onBack={() => router.push('/pending-approval')}
+        onBack={() => router.push(backHref)}
       />
     </div>
   );

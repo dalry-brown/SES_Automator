@@ -62,12 +62,21 @@ async function getAutofillData(vendorName, poNumber) {
      JOIN workflows w  ON w.id  = sf.workflow_id
      WHERE w.supplier_name ILIKE $1
        AND ($2::TEXT IS NULL OR w.po_number = $2)
-       AND w.status = 'approved'
+       AND w.status IN ('approved', 'sent', 'closed')
      ORDER BY fv.created_at DESC
      LIMIT 1`,
     [vendorName, poNumber || null]
   );
-  return rows[0]?.data || null;
+  if (!rows[0]?.data) return null;
+
+  const raw = rows[0].data;
+  // Multi-form format: { forms: [{ vendorName, ..., sesRows, ... }] }
+  const source = (raw.forms && Array.isArray(raw.forms) && raw.forms.length > 0)
+    ? raw.forms[0]
+    : raw;
+  // Strip non-field keys before returning
+  const { sesRows: _s, removedAttachments: _r, attOrder: _a, ...fields } = source;
+  return fields;
 }
 
 module.exports = {

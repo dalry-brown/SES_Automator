@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   CheckCircle, MessageCircle, AlertCircle, RotateCcw,
   UserCheck, Send, Clock, XCircle, X, Users,
@@ -12,6 +12,20 @@ import { useAuth } from '@/components/providers/AuthProvider';
 import { approvalApi } from '@/lib/api';
 import { SignatureModal } from './SignatureModal';
 import type { Workflow } from '@/types';
+
+const SIGN_STEPS  = ['Processing signature…', 'Saving document…', 'Notifying team…', 'Almost done…'];
+const SEND_STEPS  = ['Preparing document…', 'Sending email…', 'Updating status…', 'Almost done…'];
+const STEP_DELAY  = 5_000; // rotate every 5 s
+
+function useStepMessage(active: boolean, steps: string[]) {
+  const [idx, setIdx] = useState(0);
+  useEffect(() => {
+    if (!active) { setIdx(0); return; }
+    const t = setInterval(() => setIdx((i) => (i + 1) % steps.length), STEP_DELAY);
+    return () => clearInterval(t);
+  }, [active, steps.length]);
+  return steps[idx];
+}
 
 type Recipient = { name: string; address: string };
 
@@ -156,6 +170,7 @@ export function SignaturePanel({
   const [rerouteEmail, setRerouteEmail] = useState('');
   const [rerouteName, setRerouteName]   = useState('');
   const [sigModalOpen, setSigModalOpen] = useState(false);
+  const [recovering, setRecovering]     = useState(false);
 
   // Recipient editing state (populated when send panel opens)
   const [toRecipients, setToRecipients]     = useState<Recipient[]>([]);
@@ -163,6 +178,45 @@ export function SignaturePanel({
   const [originalTo, setOriginalTo]         = useState<Recipient[]>([]);
   const [originalCc, setOriginalCc]         = useState<Recipient[]>([]);
   const [recipientsLoading, setRecipientsLoading] = useState(false);
+  const [emailBody, setEmailBody]           = useState('');
+
+  // Add-recipient inline form state
+  const [addingTo, setAddingTo]   = useState(false);
+  const [newToName, setNewToName] = useState('');
+  const [newToEmail, setNewToEmail] = useState('');
+  const [addingCc, setAddingCc]   = useState(false);
+  const [newCcName, setNewCcName] = useState('');
+  const [newCcEmail, setNewCcEmail] = useState('');
+
+  const signStep = useStepMessage(sign.isPending, SIGN_STEPS);
+  const sendStep = useStepMessage(sendToVendor.isPending, SEND_STEPS);
+
+  // After a timeout error, poll the workflow status for up to 2 min to detect
+  // whether the backend actually completed the operation.
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const stopPolling = () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
+
+  const startRecoveryPoll = (expectedStatus: string, onRecovered: () => void) => {
+    setRecovering(true);
+    let attempts = 0;
+    pollRef.current = setInterval(async () => {
+      attempts++;
+      try {
+        const data = await approvalApi.pageData(workflow.id);
+        if (data.workflow.status === expectedStatus) {
+          stopPolling();
+          setRecovering(false);
+          onRecovered();
+        }
+      } catch { /* ignore poll errors */ }
+      if (attempts >= 24) { // 2 min at 5 s intervals
+        stopPolling();
+        setRecovering(false);
+      }
+    }, 5_000);
+  };
+
+  useEffect(() => () => stopPolling(), []);
 
   const status    = workflow.status;
   const isActionable = ['pending_approval', 'queried'].includes(status);
@@ -181,7 +235,10 @@ export function SignaturePanel({
     setCcRecipients([]);
     setOriginalTo([]);
     setOriginalCc([]);
+    setEmailBody('');
     setRecipientsLoading(false);
+    setAddingTo(false); setNewToName(''); setNewToEmail('');
+    setAddingCc(false); setNewCcName(''); setNewCcEmail('');
   };
 
   // Fetch thread recipients when the send panel opens
@@ -196,6 +253,7 @@ export function SignaturePanel({
         setCcRecipients(data.ccRecipients);
         setOriginalTo(data.toRecipients);
         setOriginalCc(data.ccRecipients);
+        setEmailBody(data.defaultBody || '');
       })
       .catch(() => {})
       .finally(() => { if (!cancelled) setRecipientsLoading(false); });
@@ -205,7 +263,6 @@ export function SignaturePanel({
   // ── Handlers ─────────────────────────────────────────────────────────────────
   const handleSign = async (dataUrl: string) => {
     try {
-      // Post each skipped-document reason as a comment before signing
       for (const reason of skippedReasons) {
         await comment.mutateAsync(reason);
       }
@@ -214,7 +271,17 @@ export function SignaturePanel({
       setSigModalOpen(false);
       onSigned?.();
     } catch (err: unknown) {
-      error(err instanceof Error ? err.message : 'Signing failed');
+      const msg = err instanceof Error ? err.message : 'Signing failed';
+      if (msg.includes('timed out')) {
+        error('Signing is taking longer than expected — checking if it completed…');
+        setSigModalOpen(false);
+        startRecoveryPoll('approved', () => {
+          success('Workflow was approved successfully.');
+          onSigned?.();
+        });
+      } else {
+        error(msg);
+      }
     }
   };
 
@@ -277,13 +344,37 @@ export function SignaturePanel({
 
   const handleSendToVendor = async () => {
     try {
-      await sendToVendor.mutateAsync({ toRecipients, ccRecipients });
+      await sendToVendor.mutateAsync({ toRecipients, ccRecipients, body: emailBody });
       success('Document sent to vendor.');
       reset();
     } catch (err: unknown) {
-      error(err instanceof Error ? err.message : 'Failed to send document');
+      const msg = err instanceof Error ? err.message : 'Failed to send document';
+      if (msg.includes('timed out')) {
+        error('Send is taking longer than expected — checking if it completed…');
+        reset();
+        startRecoveryPoll('sent', () => {
+          success('Document was sent to the vendor successfully.');
+        });
+      } else {
+        error(msg);
+      }
     }
   };
+
+  // ── Recovery banner ───────────────────────────────────────────────────────────
+  if (recovering) {
+    return (
+      <div className="rounded-xl bg-blue-50 border border-blue-200 p-4 flex items-start gap-3">
+        <div className="h-4 w-4 rounded-full border-2 border-blue-400 border-t-transparent animate-spin flex-shrink-0 mt-0.5" />
+        <div>
+          <p className="text-[13px] font-semibold text-blue-800">Checking status…</p>
+          <p className="text-[12px] text-blue-600 mt-0.5">
+            The operation is still completing on the server. This page will update automatically.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   // ── Terminal / non-actionable statuses ────────────────────────────────────────
   const terminalStatuses = ['approved', 'sent', 'returned', 'queried', 'closed', 'cancelled'];
@@ -333,13 +424,31 @@ export function SignaturePanel({
     return <div className="space-y-3">{banner}</div>;
   }
 
-  // ── Send panel — recipient editing + confirmation ─────────────────────────────
+  // ── Send panel — recipient editing + body + confirmation ─────────────────────
   if (actionMode === 'send') {
-    const isDirty =
+    const recipientsDirty =
       toRecipients.length !== originalTo.length ||
       ccRecipients.length !== originalCc.length ||
       toRecipients.some((r, i) => r.address !== originalTo[i]?.address) ||
       ccRecipients.some((r, i) => r.address !== originalCc[i]?.address);
+
+    const addToRecipient = () => {
+      const email = newToEmail.trim();
+      if (!email) return;
+      if (!toRecipients.some((r) => r.address === email)) {
+        setToRecipients((p) => [...p, { name: newToName.trim(), address: email }]);
+      }
+      setNewToName(''); setNewToEmail(''); setAddingTo(false);
+    };
+
+    const addCcRecipient = () => {
+      const email = newCcEmail.trim();
+      if (!email) return;
+      if (!ccRecipients.some((r) => r.address === email)) {
+        setCcRecipients((p) => [...p, { name: newCcName.trim(), address: email }]);
+      }
+      setNewCcName(''); setNewCcEmail(''); setAddingCc(false);
+    };
 
     return (
       <div className="space-y-3">
@@ -349,7 +458,7 @@ export function SignaturePanel({
           {/* Header */}
           <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2">
             <Users size={14} className="text-[#1b3a6b] flex-shrink-0" />
-            <p className="text-[13px] font-semibold text-slate-800">Review recipients</p>
+            <p className="text-[13px] font-semibold text-slate-800">Compose email</p>
           </div>
 
           <div className="px-4 py-3 space-y-4">
@@ -359,46 +468,118 @@ export function SignaturePanel({
               </div>
             ) : (
               <>
-                {/* To */}
+                {/* ── To ─────────────────────────────────────────────── */}
                 <div className="space-y-1.5">
-                  <p className="text-[10.5px] font-bold uppercase tracking-widest text-slate-400">To</p>
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10.5px] font-bold uppercase tracking-widest text-slate-400">To</p>
+                    {!addingTo && (
+                      <button
+                        onClick={() => setAddingTo(true)}
+                        className="text-[11px] text-[#1b3a6b] hover:underline font-medium"
+                      >
+                        + Add
+                      </button>
+                    )}
+                  </div>
                   <div className="flex flex-wrap gap-1.5 min-h-[32px]">
-                    {toRecipients.length === 0 ? (
+                    {toRecipients.length === 0 && !addingTo && (
                       <span className="text-[12px] text-rose-500 italic">No recipients — add at least one</span>
-                    ) : (
-                      toRecipients.map((r) => (
-                        <RecipientChip
-                          key={r.address}
-                          name={r.name}
-                          address={r.address}
-                          onRemove={() => setToRecipients((p) => p.filter((x) => x.address !== r.address))}
-                        />
-                      ))
                     )}
+                    {toRecipients.map((r) => (
+                      <RecipientChip
+                        key={r.address}
+                        name={r.name}
+                        address={r.address}
+                        onRemove={() => setToRecipients((p) => p.filter((x) => x.address !== r.address))}
+                      />
+                    ))}
                   </div>
+                  {addingTo && (
+                    <div className="flex gap-1.5 mt-1">
+                      <input
+                        autoFocus
+                        placeholder="Name (optional)"
+                        value={newToName}
+                        onChange={(e) => setNewToName(e.target.value)}
+                        className="flex-1 min-w-0 rounded-lg border border-slate-200 px-2 py-1.5 text-[12px] outline-none focus:border-[#1b3a6b] transition-colors"
+                      />
+                      <input
+                        placeholder="Email address"
+                        type="email"
+                        value={newToEmail}
+                        onChange={(e) => setNewToEmail(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') addToRecipient(); if (e.key === 'Escape') { setAddingTo(false); setNewToName(''); setNewToEmail(''); } }}
+                        className="flex-[1.4] min-w-0 rounded-lg border border-slate-200 px-2 py-1.5 text-[12px] outline-none focus:border-[#1b3a6b] transition-colors"
+                      />
+                      <button onClick={addToRecipient} disabled={!newToEmail.trim()} className="px-2.5 py-1.5 bg-[#1b3a6b] text-white rounded-lg text-[12px] font-medium disabled:opacity-40 hover:bg-[#162d56] transition-colors flex-shrink-0">Add</button>
+                      <button onClick={() => { setAddingTo(false); setNewToName(''); setNewToEmail(''); }} className="px-2 py-1.5 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50 transition-colors flex-shrink-0"><X size={12} /></button>
+                    </div>
+                  )}
                 </div>
 
-                {/* CC */}
+                {/* ── CC ─────────────────────────────────────────────── */}
                 <div className="space-y-1.5">
-                  <p className="text-[10.5px] font-bold uppercase tracking-widest text-slate-400">CC</p>
-                  <div className="flex flex-wrap gap-1.5 min-h-[32px]">
-                    {ccRecipients.length === 0 ? (
-                      <span className="text-[12px] text-slate-400 italic">No CC recipients</span>
-                    ) : (
-                      ccRecipients.map((r) => (
-                        <RecipientChip
-                          key={r.address}
-                          name={r.name}
-                          address={r.address}
-                          onRemove={() => setCcRecipients((p) => p.filter((x) => x.address !== r.address))}
-                        />
-                      ))
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10.5px] font-bold uppercase tracking-widest text-slate-400">CC</p>
+                    {!addingCc && (
+                      <button
+                        onClick={() => setAddingCc(true)}
+                        className="text-[11px] text-[#1b3a6b] hover:underline font-medium"
+                      >
+                        + Add
+                      </button>
                     )}
                   </div>
+                  <div className="flex flex-wrap gap-1.5 min-h-[24px]">
+                    {ccRecipients.length === 0 && !addingCc && (
+                      <span className="text-[12px] text-slate-400 italic">No CC recipients</span>
+                    )}
+                    {ccRecipients.map((r) => (
+                      <RecipientChip
+                        key={r.address}
+                        name={r.name}
+                        address={r.address}
+                        onRemove={() => setCcRecipients((p) => p.filter((x) => x.address !== r.address))}
+                      />
+                    ))}
+                  </div>
+                  {addingCc && (
+                    <div className="flex gap-1.5 mt-1">
+                      <input
+                        autoFocus
+                        placeholder="Name (optional)"
+                        value={newCcName}
+                        onChange={(e) => setNewCcName(e.target.value)}
+                        className="flex-1 min-w-0 rounded-lg border border-slate-200 px-2 py-1.5 text-[12px] outline-none focus:border-[#1b3a6b] transition-colors"
+                      />
+                      <input
+                        placeholder="Email address"
+                        type="email"
+                        value={newCcEmail}
+                        onChange={(e) => setNewCcEmail(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') addCcRecipient(); if (e.key === 'Escape') { setAddingCc(false); setNewCcName(''); setNewCcEmail(''); } }}
+                        className="flex-[1.4] min-w-0 rounded-lg border border-slate-200 px-2 py-1.5 text-[12px] outline-none focus:border-[#1b3a6b] transition-colors"
+                      />
+                      <button onClick={addCcRecipient} disabled={!newCcEmail.trim()} className="px-2.5 py-1.5 bg-[#1b3a6b] text-white rounded-lg text-[12px] font-medium disabled:opacity-40 hover:bg-[#162d56] transition-colors flex-shrink-0">Add</button>
+                      <button onClick={() => { setAddingCc(false); setNewCcName(''); setNewCcEmail(''); }} className="px-2 py-1.5 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50 transition-colors flex-shrink-0"><X size={12} /></button>
+                    </div>
+                  )}
                 </div>
 
-                {/* Reset */}
-                {isDirty && (
+                {/* ── Message body ────────────────────────────────────── */}
+                <div className="space-y-1.5">
+                  <p className="text-[10.5px] font-bold uppercase tracking-widest text-slate-400">Message</p>
+                  <textarea
+                    rows={7}
+                    value={emailBody}
+                    onChange={(e) => setEmailBody(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-[12.5px] text-slate-700 leading-relaxed outline-none resize-none focus:border-[#1b3a6b] focus:ring-2 focus:ring-[#1b3a6b]/10 transition-all font-mono"
+                  />
+                  <p className="text-[10.5px] text-slate-400">The signed PDF will be attached automatically.</p>
+                </div>
+
+                {/* Reset recipients link */}
+                {recipientsDirty && (
                   <button
                     onClick={() => { setToRecipients(originalTo); setCcRecipients(originalCc); }}
                     className="text-[11.5px] text-slate-400 hover:text-[#1b3a6b] transition-colors underline underline-offset-2"
@@ -413,7 +594,7 @@ export function SignaturePanel({
           {/* Footer note */}
           <div className="px-4 py-2.5 border-t border-slate-100 bg-slate-50">
             <p className="text-[11px] text-slate-400 leading-relaxed">
-              The signed document will be attached. Workflow moves to <strong>Sent</strong>.
+              Sent as a reply-all in the original email thread. Workflow moves to <strong>Sent</strong>.
             </p>
           </div>
         </div>
@@ -433,7 +614,7 @@ export function SignaturePanel({
             className="flex-1 py-2.5 rounded-xl bg-[#1b3a6b] text-white text-[12.5px] font-semibold hover:bg-[#162d56] transition-colors disabled:opacity-40 flex items-center justify-center gap-2"
           >
             {sendToVendor.isPending
-              ? <><div className="h-3.5 w-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" /> Sending…</>
+              ? <><div className="h-3.5 w-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" /> {sendStep}</>
               : <><Send size={13} /> Send document</>
             }
           </button>
@@ -600,6 +781,7 @@ export function SignaturePanel({
         open={sigModalOpen}
         user={user}
         loading={sign.isPending}
+        loadingLabel={signStep}
         onClose={() => setSigModalOpen(false)}
         onConfirm={handleSign}
       />

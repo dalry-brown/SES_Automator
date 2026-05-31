@@ -476,15 +476,19 @@ export function SesFormPanel({
   // ── Auto-fill from DB (vendor history) ───────────────────────────────────
   const handleDbAutofill = async () => {
     if (!vendorName) { warning('Enter a vendor name first.'); return; }
-    const data = await autofill.mutateAsync({ vendorName, poNumber: watch('poNumber') });
-    if (!data) { warning('No previous data found for this vendor.'); return; }
-    Object.entries(data).forEach(([k, v]) => {
-      if (AUTO_FILL_KEYS.includes(k as keyof FormValues) && v) {
-        setValue(k as keyof FormValues, v as string, { shouldDirty: true });
-      }
-    });
-    setAutoFilled(true);
-    success('Fields prefilled from last approved submission.');
+    try {
+      const data = await autofill.mutateAsync({ vendorName, poNumber: watch('poNumber') });
+      if (!data) { warning('No previous data found for this vendor.'); return; }
+      Object.entries(data).forEach(([k, v]) => {
+        if (AUTO_FILL_KEYS.includes(k as keyof FormValues) && v) {
+          setValue(k as keyof FormValues, v as string, { shouldDirty: true });
+        }
+      });
+      setAutoFilled(true);
+      success('Fields prefilled from last submission for this vendor.');
+    } catch (err) {
+      toastError(err instanceof Error ? err.message : 'Autofill failed');
+    }
   };
 
   // ── SES row helpers ───────────────────────────────────────────────────────

@@ -10,6 +10,7 @@ interface SignatureModalProps {
   open: boolean;
   user: User;
   loading?: boolean;
+  loadingLabel?: string;
   onClose: () => void;
   onConfirm: (signatureDataUrl: string) => void;
 }
@@ -22,7 +23,7 @@ const SIGNATURE_FONTS = [
   { label: 'Formal',    style: "'Courier New', Courier, monospace" },
 ];
 
-export function SignatureModal({ open, user, loading, onClose, onConfirm }: SignatureModalProps) {
+export function SignatureModal({ open, user, loading, loadingLabel = 'Signing…', onClose, onConfirm }: SignatureModalProps) {
   const canvasRef   = useRef<HTMLCanvasElement>(null);
   const padRef      = useRef<SignaturePad | null>(null);
   const [mode, setMode]         = useState<InputMode>('draw');
@@ -241,7 +242,10 @@ export function SignatureModal({ open, user, loading, onClose, onConfirm }: Sign
             disabled={!canConfirm || loading}
             className="flex-1 py-2.5 rounded-xl bg-slate-900 text-white text-[13px] font-semibold hover:bg-slate-800 transition-colors disabled:opacity-40"
           >
-            {loading ? 'Signing…' : 'Confirm & Sign'}
+            {loading
+            ? <><div className="inline-block h-3.5 w-3.5 rounded-full border-2 border-white border-t-transparent animate-spin mr-1.5" />{loadingLabel}</>
+            : 'Confirm & Sign'
+          }
           </button>
         </div>
       </div>

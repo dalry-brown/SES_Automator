@@ -337,6 +337,10 @@ ALTER TABLE approval_events ADD CONSTRAINT approval_events_type_check
 ALTER TABLE approval_events ADD COLUMN IF NOT EXISTS rerouted_to_email TEXT;
 ALTER TABLE approval_events ADD COLUMN IF NOT EXISTS rerouted_to_name  TEXT;
 
+-- Thread message flags
+ALTER TABLE thread_messages ADD COLUMN IF NOT EXISTS is_new      BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE thread_messages ADD COLUMN IF NOT EXISTS is_outbound BOOLEAN NOT NULL DEFAULT FALSE;
+
 -- Track the active contract holder even after re-routing
 ALTER TABLE workflows ADD COLUMN IF NOT EXISTS rerouted_to_email TEXT;
 ALTER TABLE workflows ADD COLUMN IF NOT EXISTS rerouted_to_name  TEXT;

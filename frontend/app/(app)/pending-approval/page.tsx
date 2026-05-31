@@ -12,7 +12,8 @@ import { SplitPanel, PanelHeader, PanelBody, PanelFooter, PanelSection, MetaRow,
 import { PageSpinner } from '@/components/ui/Spinner';
 import { formatDate, formatDateTime, daysSince, cn } from '@/lib/utils';
 import { sesApi, approvalApi, workflowsApi } from '@/lib/api';
-import type { Workflow, SesForm, ApprovalEvent } from '@/types';
+import { ThreadView } from '@/components/ui/ThreadView';
+import type { Workflow, SesForm, ApprovalEvent, ThreadMessage } from '@/types';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 type StoredRow  = { sesNumber: string; amount: string };
@@ -77,12 +78,12 @@ function useWorkflowPanelData(workflowId: string) {
     queryFn:  () => workflowsApi.getMessages(workflowId),
     enabled:  !!workflowId,
   });
-  // Use the first (original) message for CC info
-  const firstMessage = msgQ.data?.messages?.[0] ?? null;
+  const messages: ThreadMessage[] = msgQ.data?.messages ?? [];
   return {
     sesForm: sesQ.data?.form ?? null,
     events: evQ.data?.events ?? [],
-    firstMessage,
+    firstMessage: messages[0] ?? null,
+    messages,
     isLoading: sesQ.isLoading,
   };
 }
@@ -90,7 +91,8 @@ function useWorkflowPanelData(workflowId: string) {
 // ── CH side panel ──────────────────────────────────────────────────────────────
 function ChSidePanel({ workflow }: { workflow: Workflow }) {
   const router = useRouter();
-  const { sesForm, events, firstMessage, isLoading } = useWorkflowPanelData(workflow.id);
+  const [activeTab, setActiveTab] = useState<'details' | 'thread'>('details');
+  const { sesForm, events, firstMessage, messages, isLoading } = useWorkflowPanelData(workflow.id);
 
   const f = firstForm(sesForm);
   const rawForms = (sesForm?.fields as StoredFields | null)?.forms ?? (f ? [f] : []);
@@ -116,93 +118,126 @@ function ChSidePanel({ workflow }: { workflow: Workflow }) {
         title={f?.vendorName || workflow.supplierName || 'Unknown vendor'}
         subtitle={workflow.invoiceNumber ? `Invoice ${workflow.invoiceNumber}` : undefined}
       />
-      <PanelBody>
-        {isLoading ? (
-          <div className="flex items-center justify-center h-24 text-[12px] text-ce-muted">Loading details…</div>
-        ) : (
-          <>
-            {/* Show CC recipients from original email if present */}
-            {firstMessage?.ccRecipients && firstMessage.ccRecipients.length > 0 && (
-              <PanelSection label="Email CC">
-                <p className="text-[12px] text-ce-text leading-relaxed break-words">
-                  {firstMessage.ccRecipients.map((r) => r.emailAddress.address).join(', ')}
-                </p>
-              </PanelSection>
+
+      {/* Tab bar */}
+      <div className="flex border-b border-ce-border flex-shrink-0 bg-white px-4">
+        {(['details', 'thread'] as const).map((tab) => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={cn(
+              'px-3 py-2 text-[12.5px] font-medium border-b-2 transition-colors capitalize',
+              activeTab === tab
+                ? 'border-ce-navy text-ce-navy'
+                : 'border-transparent text-ce-muted hover:text-ce-text',
             )}
+          >
+            {tab === 'thread' ? (
+              <span className="flex items-center gap-1">
+                Thread
+                {messages.length > 0 && (
+                  <span className="bg-ce-navy/10 text-ce-navy text-[10px] font-bold px-1 rounded-full">
+                    {messages.length}
+                  </span>
+                )}
+              </span>
+            ) : 'Details'}
+          </button>
+        ))}
+      </div>
 
-            <PanelSection label="Vendor & invoice">
-              <MetaRow label="Vendor"   value={f?.vendorName  || workflow.supplierName} />
-              <MetaRow label="Invoice"  value={workflow.invoiceNumber} />
-              <MetaRow label="PO no."   value={f?.poNumber    || workflow.poNumber} />
-              <MetaRow label="Amount"   value={amountStr} />
-            </PanelSection>
+      {activeTab === 'thread' ? (
+        <ThreadView messages={messages} workflowId={workflow.id} canReply={false} />
+      ) : (
+        <>
+          <PanelBody>
+            {isLoading ? (
+              <div className="flex items-center justify-center h-24 text-[12px] text-ce-muted">Loading details…</div>
+            ) : (
+              <>
+                {firstMessage?.ccRecipients && firstMessage.ccRecipients.length > 0 && (
+                  <PanelSection label="Email CC">
+                    <p className="text-[12px] text-ce-text leading-relaxed break-words">
+                      {firstMessage.ccRecipients.map((r) => r.emailAddress.address).join(', ')}
+                    </p>
+                  </PanelSection>
+                )}
 
-            {sesNumbers.length > 0 && (
-              <PanelSection label="SES numbers">
-                <div className="flex flex-wrap gap-1.5">
-                  {sesNumbers.map((sn, i) => (
-                    <span key={i} className="bg-ce-bg border border-ce-border text-[12px] text-ce-text px-2 py-0.5 rounded-md font-mono">
-                      {sn}
-                    </span>
-                  ))}
-                </div>
-              </PanelSection>
+                <PanelSection label="Vendor & invoice">
+                  <MetaRow label="Vendor"   value={f?.vendorName  || workflow.supplierName} />
+                  <MetaRow label="Invoice"  value={workflow.invoiceNumber} />
+                  <MetaRow label="PO no."   value={f?.poNumber    || workflow.poNumber} />
+                  <MetaRow label="Amount"   value={amountStr} />
+                </PanelSection>
+
+                {sesNumbers.length > 0 && (
+                  <PanelSection label="SES numbers">
+                    <div className="flex flex-wrap gap-1.5">
+                      {sesNumbers.map((sn, i) => (
+                        <span key={i} className="bg-ce-bg border border-ce-border text-[12px] text-ce-text px-2 py-0.5 rounded-md font-mono">
+                          {sn}
+                        </span>
+                      ))}
+                    </div>
+                  </PanelSection>
+                )}
+
+                {f?.description && (
+                  <PanelSection label="Scope of work">
+                    <p className="text-[13px] text-ce-text leading-relaxed">{f.description as string}</p>
+                  </PanelSection>
+                )}
+
+                {allForms.length > 1 && (
+                  <PanelSection label="Documents">
+                    <p className="text-[12px] text-ce-muted">{allForms.length} SES forms require your signature.</p>
+                  </PanelSection>
+                )}
+
+                {noteEvents.length > 0 && (
+                  <PanelSection label="Messages & activity">
+                    <div className="space-y-2">
+                      {noteEvents.slice(-3).map((ev) => {
+                        const Icon  = EVENT_ICONS[ev.type] ?? MessageCircle;
+                        const color = EVENT_COLORS[ev.type] ?? 'text-slate-500';
+                        const label = EVENT_LABELS[ev.type] ?? ev.type;
+                        return (
+                          <div key={ev.id} className="flex gap-2.5 p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
+                            <Icon size={13} className={cn('flex-shrink-0 mt-0.5', color)} />
+                            <div className="min-w-0">
+                              <p className={cn('text-[11px] font-semibold', color)}>{label}</p>
+                              <p className="text-[11px] text-slate-400">{ev.userName} · {formatDateTime(ev.createdAt)}</p>
+                              {ev.comment && (
+                                <p className="text-[12px] text-slate-600 mt-1 leading-snug">{ev.comment}</p>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </PanelSection>
+                )}
+
+                <PanelSection label="Submitted">
+                  <MetaRow label="Date"    value={workflow.submittedAt ? formatDateTime(workflow.submittedAt) : undefined} />
+                  <MetaRow label="Pending" value={(() => {
+                    const d = daysSince(workflow.submittedAt);
+                    return d != null ? `${d} day${d !== 1 ? 's' : ''}` : undefined;
+                  })()} />
+                </PanelSection>
+              </>
             )}
-
-            {f?.description && (
-              <PanelSection label="Scope of work">
-                <p className="text-[13px] text-ce-text leading-relaxed">{f.description as string}</p>
-              </PanelSection>
-            )}
-
-            {allForms.length > 1 && (
-              <PanelSection label="Documents">
-                <p className="text-[12px] text-ce-muted">{allForms.length} SES forms require your signature.</p>
-              </PanelSection>
-            )}
-
-            {noteEvents.length > 0 && (
-              <PanelSection label="Messages & activity">
-                <div className="space-y-2">
-                  {noteEvents.slice(-3).map((ev) => {
-                    const Icon  = EVENT_ICONS[ev.type] ?? MessageCircle;
-                    const color = EVENT_COLORS[ev.type] ?? 'text-slate-500';
-                    const label = EVENT_LABELS[ev.type] ?? ev.type;
-                    return (
-                      <div key={ev.id} className="flex gap-2.5 p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
-                        <Icon size={13} className={cn('flex-shrink-0 mt-0.5', color)} />
-                        <div className="min-w-0">
-                          <p className={cn('text-[11px] font-semibold', color)}>{label}</p>
-                          <p className="text-[11px] text-slate-400">{ev.userName} · {formatDateTime(ev.createdAt)}</p>
-                          {ev.comment && (
-                            <p className="text-[12px] text-slate-600 mt-1 leading-snug">{ev.comment}</p>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </PanelSection>
-            )}
-
-            <PanelSection label="Submitted">
-              <MetaRow label="Date"    value={workflow.submittedAt ? formatDateTime(workflow.submittedAt) : undefined} />
-              <MetaRow label="Pending" value={(() => {
-                const d = daysSince(workflow.submittedAt);
-                return d != null ? `${d} day${d !== 1 ? 's' : ''}` : undefined;
-              })()} />
-            </PanelSection>
-          </>
-        )}
-      </PanelBody>
-      <PanelFooter>
-        <button
-          onClick={() => router.push(`/workflows/${workflow.id}/approval`)}
-          className="w-full bg-ce-navy text-white text-[13px] font-semibold py-2.5 rounded-lg hover:bg-ce-navy2 transition-colors flex items-center justify-center gap-2"
-        >
-          <FileText size={14} /> Review &amp; sign document
-        </button>
-      </PanelFooter>
+          </PanelBody>
+          <PanelFooter>
+            <button
+              onClick={() => router.push(`/workflows/${workflow.id}/approval?from=/pending-approval`)}
+              className="w-full bg-ce-navy text-white text-[13px] font-semibold py-2.5 rounded-lg hover:bg-ce-navy2 transition-colors flex items-center justify-center gap-2"
+            >
+              <FileText size={14} /> Review &amp; sign document
+            </button>
+          </PanelFooter>
+        </>
+      )}
     </>
   );
 }
@@ -210,7 +245,8 @@ function ChSidePanel({ workflow }: { workflow: Workflow }) {
 // ── Editor side panel ──────────────────────────────────────────────────────────
 function EditorSidePanel({ workflow }: { workflow: Workflow }) {
   const router = useRouter();
-  const { sesForm, events, firstMessage, isLoading } = useWorkflowPanelData(workflow.id);
+  const [activeTab, setActiveTab] = useState<'details' | 'thread'>('details');
+  const { sesForm, events, firstMessage, messages, isLoading } = useWorkflowPanelData(workflow.id);
   const { reply: replyMutation } = useApprovalMutations(workflow.id);
   const { success: toastSuccess } = useToast();
   const [replyText, setReplyText] = useState('');
@@ -240,151 +276,185 @@ function EditorSidePanel({ workflow }: { workflow: Workflow }) {
         title={f?.vendorName || workflow.supplierName || 'Unknown vendor'}
         subtitle={workflow.invoiceNumber ? `Invoice ${workflow.invoiceNumber}` : undefined}
       />
-      <PanelBody>
-        {isLoading ? (
-          <div className="flex items-center justify-center h-24 text-[12px] text-ce-muted">Loading…</div>
-        ) : (
-          <>
-            <PanelSection label="Invoice details">
-              <MetaRow label="Vendor"  value={f?.vendorName  || workflow.supplierName} />
-              <MetaRow label="Invoice" value={workflow.invoiceNumber} />
-              <MetaRow label="Amount"  value={amountStr} />
-              <MetaRow label="PO no."  value={f?.poNumber || workflow.poNumber} />
-            </PanelSection>
 
-            {sesNumbers.length > 0 && (
-              <PanelSection label="SES numbers">
-                <div className="flex flex-wrap gap-1.5">
-                  {sesNumbers.map((sn, i) => (
-                    <span key={i} className="bg-ce-bg border border-ce-border text-[12px] text-ce-text px-2 py-0.5 rounded-md font-mono">
-                      {sn}
-                    </span>
-                  ))}
-                </div>
-              </PanelSection>
-            )}
-
-            {f?.description && (
-              <PanelSection label="Scope of work">
-                <p className="text-[13px] text-ce-text leading-relaxed">{f.description as string}</p>
-              </PanelSection>
-            )}
-
-            {firstMessage?.ccRecipients && firstMessage.ccRecipients.length > 0 && (
-              <PanelSection label="Email CC">
-                <p className="text-[12px] text-ce-text leading-relaxed break-words">
-                  {firstMessage.ccRecipients.map((r) => r.emailAddress.address).join(', ')}
-                </p>
-              </PanelSection>
-            )}
-
-            <PanelSection label="Contract holder">
-              <MetaRow label="Name"  value={workflow.contractHolderName} />
-              <MetaRow label="Email" value={workflow.contractHolderEmail} />
-              <MetaRow label="Sent"  value={workflow.submittedAt ? formatDateTime(workflow.submittedAt) : undefined} />
-              {days != null && (
-                <MetaRow label="Pending" value={
-                  <span className={days >= 7 ? 'dur-over' : days >= 3 ? 'dur-warn' : 'dur-ok'}>
-                    {days} day{days !== 1 ? 's' : ''}
-                  </span>
-                } />
-              )}
-            </PanelSection>
-
-            {noteEvents.length > 0 && (
-              <PanelSection label={workflow.status === 'queried' ? 'Query thread' : 'CH messages'}>
-                <div className="space-y-2">
-                  {noteEvents.map((ev) => {
-                    const Icon  = EVENT_ICONS[ev.type] ?? MessageCircle;
-                    const color = EVENT_COLORS[ev.type] ?? 'text-slate-500';
-                    const label = EVENT_LABELS[ev.type] ?? ev.type;
-                    return (
-                      <div key={ev.id} className="flex gap-2.5 p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
-                        <Icon size={13} className={cn('flex-shrink-0 mt-0.5', color)} />
-                        <div className="min-w-0">
-                          <p className={cn('text-[11px] font-semibold', color)}>{label}</p>
-                          <p className="text-[11px] text-slate-400">{ev.userName} · {formatDateTime(ev.createdAt)}</p>
-                          {ev.comment && (
-                            <p className="text-[12px] text-slate-600 mt-1 leading-snug">{ev.comment}</p>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </PanelSection>
-            )}
-
-            {(workflow.status === 'queried' || workflow.status === 'returned') && (
-              <PanelSection label={workflow.status === 'returned' ? 'Reply to CH' : 'Your response'}>
-                <div className="space-y-2">
-                  <textarea
-                    rows={3}
-                    value={replyText}
-                    onChange={(e) => setReplyText(e.target.value)}
-                    placeholder={
-                      workflow.status === 'returned'
-                        ? 'e.g. This invoice was already corrected — please review the updated version…'
-                        : 'Type your response to the query…'
-                    }
-                    className="w-full rounded-lg border border-ce-border px-3 py-2 text-[12px] outline-none resize-none focus:border-ce-navy text-ce-text placeholder:text-ce-hint"
-                  />
-                  <button
-                    onClick={handleReply}
-                    disabled={!replyText.trim() || replyMutation.isPending}
-                    className="w-full bg-ce-navy text-white text-[12.5px] font-medium py-2 rounded-lg hover:bg-ce-navy2 transition-colors disabled:opacity-40"
-                  >
-                    {replyMutation.isPending ? 'Sending…' : 'Send response'}
-                  </button>
-                </div>
-              </PanelSection>
-            )}
-          </>
-        )}
-      </PanelBody>
-      <PanelFooter>
-        {workflow.status === 'returned' ? (
-          <>
-            <button
-              onClick={() => router.push(`/workflows/${workflow.id}`)}
-              className="w-full bg-ce-navy text-white text-[13px] font-semibold py-2.5 rounded-lg hover:bg-ce-navy2 transition-colors flex items-center justify-center gap-2"
-            >
-              <Edit size={14} /> Edit SES form
-            </button>
-            <button
-              onClick={() => router.push(`/workflows/${workflow.id}/approval`)}
-              className="w-full bg-white border border-ce-border text-[13px] font-medium py-2 rounded-lg text-ce-muted hover:bg-ce-bg hover:text-ce-text transition-colors flex items-center justify-center gap-1.5"
-            >
-              <ChevronRight size={13} /> View approval page
-            </button>
-          </>
-        ) : workflow.status === 'queried' ? (
+      {/* Tab bar */}
+      <div className="flex border-b border-ce-border flex-shrink-0 bg-white px-4">
+        {(['details', 'thread'] as const).map((tab) => (
           <button
-            onClick={() => router.push(`/workflows/${workflow.id}/approval`)}
-            className="w-full bg-ce-navy text-white text-[13px] font-medium py-2 rounded-lg hover:bg-ce-navy2 transition-colors flex items-center justify-center gap-1.5"
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={cn(
+              'px-3 py-2 text-[12.5px] font-medium border-b-2 transition-colors capitalize',
+              activeTab === tab
+                ? 'border-ce-navy text-ce-navy'
+                : 'border-transparent text-ce-muted hover:text-ce-text',
+            )}
           >
-            <ChevronRight size={13} /> View approval page
+            {tab === 'thread' ? (
+              <span className="flex items-center gap-1">
+                Thread
+                {messages.length > 0 && (
+                  <span className="bg-ce-navy/10 text-ce-navy text-[10px] font-bold px-1 rounded-full">
+                    {messages.length}
+                  </span>
+                )}
+              </span>
+            ) : 'Details'}
           </button>
-        ) : (
-          <>
-            <button
-              onClick={() => router.push(`/workflows/${workflow.id}/approval`)}
-              className="w-full bg-ce-navy text-white text-[13px] font-medium py-2 rounded-lg hover:bg-ce-navy2 transition-colors flex items-center justify-center gap-1.5"
-            >
-              <ChevronRight size={13} /> View approval page
-            </button>
-            <button
-              onClick={() => router.push(`/workflows/${workflow.id}`)}
-              className="w-full bg-white border border-ce-border text-[13px] font-medium py-2 rounded-lg text-ce-muted hover:bg-ce-bg hover:text-ce-text transition-colors flex items-center justify-center gap-1.5"
-            >
-              <Edit size={13} /> Edit SES form
-            </button>
-            <button className="w-full bg-white border border-ce-border text-[13px] font-medium py-2 rounded-lg text-ce-muted hover:bg-ce-bg hover:text-ce-text transition-colors flex items-center justify-center gap-1.5">
-              <Send size={13} /> Resend to contract holder
-            </button>
-          </>
-        )}
-      </PanelFooter>
+        ))}
+      </div>
+
+      {activeTab === 'thread' ? (
+        <ThreadView messages={messages} workflowId={workflow.id} canReply />
+      ) : (
+        <>
+          <PanelBody>
+            {isLoading ? (
+              <div className="flex items-center justify-center h-24 text-[12px] text-ce-muted">Loading…</div>
+            ) : (
+              <>
+                <PanelSection label="Invoice details">
+                  <MetaRow label="Vendor"  value={f?.vendorName  || workflow.supplierName} />
+                  <MetaRow label="Invoice" value={workflow.invoiceNumber} />
+                  <MetaRow label="Amount"  value={amountStr} />
+                  <MetaRow label="PO no."  value={f?.poNumber || workflow.poNumber} />
+                </PanelSection>
+
+                {sesNumbers.length > 0 && (
+                  <PanelSection label="SES numbers">
+                    <div className="flex flex-wrap gap-1.5">
+                      {sesNumbers.map((sn, i) => (
+                        <span key={i} className="bg-ce-bg border border-ce-border text-[12px] text-ce-text px-2 py-0.5 rounded-md font-mono">
+                          {sn}
+                        </span>
+                      ))}
+                    </div>
+                  </PanelSection>
+                )}
+
+                {f?.description && (
+                  <PanelSection label="Scope of work">
+                    <p className="text-[13px] text-ce-text leading-relaxed">{f.description as string}</p>
+                  </PanelSection>
+                )}
+
+                {firstMessage?.ccRecipients && firstMessage.ccRecipients.length > 0 && (
+                  <PanelSection label="Email CC">
+                    <p className="text-[12px] text-ce-text leading-relaxed break-words">
+                      {firstMessage.ccRecipients.map((r) => r.emailAddress.address).join(', ')}
+                    </p>
+                  </PanelSection>
+                )}
+
+                <PanelSection label="Contract holder">
+                  <MetaRow label="Name"  value={workflow.contractHolderName} />
+                  <MetaRow label="Email" value={workflow.contractHolderEmail} />
+                  <MetaRow label="Sent"  value={workflow.submittedAt ? formatDateTime(workflow.submittedAt) : undefined} />
+                  {days != null && (
+                    <MetaRow label="Pending" value={
+                      <span className={days >= 7 ? 'dur-over' : days >= 3 ? 'dur-warn' : 'dur-ok'}>
+                        {days} day{days !== 1 ? 's' : ''}
+                      </span>
+                    } />
+                  )}
+                </PanelSection>
+
+                {noteEvents.length > 0 && (
+                  <PanelSection label={workflow.status === 'queried' ? 'Query thread' : 'CH messages'}>
+                    <div className="space-y-2">
+                      {noteEvents.map((ev) => {
+                        const Icon  = EVENT_ICONS[ev.type] ?? MessageCircle;
+                        const color = EVENT_COLORS[ev.type] ?? 'text-slate-500';
+                        const label = EVENT_LABELS[ev.type] ?? ev.type;
+                        return (
+                          <div key={ev.id} className="flex gap-2.5 p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
+                            <Icon size={13} className={cn('flex-shrink-0 mt-0.5', color)} />
+                            <div className="min-w-0">
+                              <p className={cn('text-[11px] font-semibold', color)}>{label}</p>
+                              <p className="text-[11px] text-slate-400">{ev.userName} · {formatDateTime(ev.createdAt)}</p>
+                              {ev.comment && (
+                                <p className="text-[12px] text-slate-600 mt-1 leading-snug">{ev.comment}</p>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </PanelSection>
+                )}
+
+                {(workflow.status === 'queried' || workflow.status === 'returned') && (
+                  <PanelSection label={workflow.status === 'returned' ? 'Reply to CH' : 'Your response'}>
+                    <div className="space-y-2">
+                      <textarea
+                        rows={3}
+                        value={replyText}
+                        onChange={(e) => setReplyText(e.target.value)}
+                        placeholder={
+                          workflow.status === 'returned'
+                            ? 'e.g. This invoice was already corrected — please review the updated version…'
+                            : 'Type your response to the query…'
+                        }
+                        className="w-full rounded-lg border border-ce-border px-3 py-2 text-[12px] outline-none resize-none focus:border-ce-navy text-ce-text placeholder:text-ce-hint"
+                      />
+                      <button
+                        onClick={handleReply}
+                        disabled={!replyText.trim() || replyMutation.isPending}
+                        className="w-full bg-ce-navy text-white text-[12.5px] font-medium py-2 rounded-lg hover:bg-ce-navy2 transition-colors disabled:opacity-40"
+                      >
+                        {replyMutation.isPending ? 'Sending…' : 'Send response'}
+                      </button>
+                    </div>
+                  </PanelSection>
+                )}
+              </>
+            )}
+          </PanelBody>
+          <PanelFooter>
+            {workflow.status === 'returned' ? (
+              <>
+                <button
+                  onClick={() => router.push(`/workflows/${workflow.id}?from=/pending-approval`)}
+                  className="w-full bg-ce-navy text-white text-[13px] font-semibold py-2.5 rounded-lg hover:bg-ce-navy2 transition-colors flex items-center justify-center gap-2"
+                >
+                  <Edit size={14} /> Edit SES form
+                </button>
+                <button
+                  onClick={() => router.push(`/workflows/${workflow.id}/approval?from=/pending-approval`)}
+                  className="w-full bg-white border border-ce-border text-[13px] font-medium py-2 rounded-lg text-ce-muted hover:bg-ce-bg hover:text-ce-text transition-colors flex items-center justify-center gap-1.5"
+                >
+                  <ChevronRight size={13} /> View approval page
+                </button>
+              </>
+            ) : workflow.status === 'queried' ? (
+              <button
+                onClick={() => router.push(`/workflows/${workflow.id}/approval?from=/pending-approval`)}
+                className="w-full bg-ce-navy text-white text-[13px] font-medium py-2 rounded-lg hover:bg-ce-navy2 transition-colors flex items-center justify-center gap-1.5"
+              >
+                <ChevronRight size={13} /> View approval page
+              </button>
+            ) : (
+              <>
+                <button
+                  onClick={() => router.push(`/workflows/${workflow.id}/approval?from=/pending-approval`)}
+                  className="w-full bg-ce-navy text-white text-[13px] font-medium py-2 rounded-lg hover:bg-ce-navy2 transition-colors flex items-center justify-center gap-1.5"
+                >
+                  <ChevronRight size={13} /> View approval page
+                </button>
+                <button
+                  onClick={() => router.push(`/workflows/${workflow.id}?from=/pending-approval`)}
+                  className="w-full bg-white border border-ce-border text-[13px] font-medium py-2 rounded-lg text-ce-muted hover:bg-ce-bg hover:text-ce-text transition-colors flex items-center justify-center gap-1.5"
+                >
+                  <Edit size={13} /> Edit SES form
+                </button>
+                <button className="w-full bg-white border border-ce-border text-[13px] font-medium py-2 rounded-lg text-ce-muted hover:bg-ce-bg hover:text-ce-text transition-colors flex items-center justify-center gap-1.5">
+                  <Send size={13} /> Resend to contract holder
+                </button>
+              </>
+            )}
+          </PanelFooter>
+        </>
+      )}
     </>
   );
 }

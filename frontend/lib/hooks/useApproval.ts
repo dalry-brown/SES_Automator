@@ -49,8 +49,8 @@ export function useApprovalMutations(workflowId: string) {
   });
 
   const sendToVendor = useMutation({
-    mutationFn: (recipients: { toRecipients: { name: string; address: string }[]; ccRecipients: { name: string; address: string }[] }) =>
-      approvalApi.sendToVendor(workflowId, recipients),
+    mutationFn: (params: { toRecipients: { name: string; address: string }[]; ccRecipients: { name: string; address: string }[]; body?: string }) =>
+      approvalApi.sendToVendor(workflowId, params),
     onSuccess: invalidate,
   });
 

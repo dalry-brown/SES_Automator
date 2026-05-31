@@ -10,6 +10,7 @@ const { registerSubscription } = require('./graph/webhook');
 const { startRenewalJob } = require('./graph/subscriptionRenewer');
 const { startLockCleanupJob } = require('./services/lockService');
 const { startTrackerSyncJob } = require('./jobs/trackerDailySync');
+const { warmupBrowser } = require('./services/documentService');
 
 // Routes
 const authRoutes = require('./routes/auth');
@@ -76,6 +77,7 @@ async function start() {
   try {
     startLockCleanupJob();
     startTrackerSyncJob();
+    warmupBrowser().catch((err) => console.warn('[Boot] Puppeteer warm-up failed (non-fatal):', err.message));
 
     // Start listening first so the webhook validation endpoint is reachable
     // before we ask Microsoft to register the subscription.

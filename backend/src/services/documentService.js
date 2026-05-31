@@ -6,7 +6,7 @@ const ExcelJS = require('exceljs');
 const { PDFDocument } = require('pdf-lib');
 const puppeteer = require('puppeteer');
 
-const { save, read }            = require('./storageService');
+const { save, read, serveByKey } = require('./storageService');
 const { insertAttachment, getAttachment } = require('../db/queries/attachments');
 const { insertSesDocument }     = require('../db/queries/sesDocuments');
 const { getFormAttachments }    = require('../db/queries/formAttachments');
@@ -414,17 +414,28 @@ ${rowsHtml}</table>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PUPPETEER HELPER — shared HTML → PDF conversion
+// PUPPETEER HELPER — singleton browser, page-level isolation
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function htmlToPdfBuffer(html, margin = '8mm') {
-  const browser = await puppeteer.launch({
+let _browser = null;
+
+async function getBrowser() {
+  if (_browser) {
+    try { await _browser.version(); return _browser; } catch { _browser = null; }
+  }
+  _browser = await puppeteer.launch({
     headless: 'new',
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
   });
+  _browser.on('disconnected', () => { _browser = null; });
+  return _browser;
+}
+
+async function htmlToPdfBuffer(html, margin = '8mm') {
+  const browser = await getBrowser();
+  const page = await browser.newPage();
   try {
-    const page = await browser.newPage();
     await page.setContent(html, { waitUntil: 'networkidle0' });
     return Buffer.from(await page.pdf({
       format: 'A4',
@@ -432,7 +443,7 @@ async function htmlToPdfBuffer(html, margin = '8mm') {
       margin: { top: margin, bottom: margin, left: margin, right: margin },
     }));
   } finally {
-    await browser.close();
+    await page.close();
   }
 }
 
@@ -598,18 +609,23 @@ async function mergeDocs(workflowId, attachmentIds, formIndex = 0, filenameMeta 
 
   const merged = await PDFDocument.create();
 
-  for (const attId of idsToMerge) {
-    const att = await getAttachment(attId);
-    if (!att) continue;
+  // Fetch all attachment records in parallel, then convert in parallel
+  const attRecords = await Promise.all(idsToMerge.map((id) => getAttachment(id)));
 
-    let pdfBytes = null;
-    try {
-      pdfBytes = await toSinglePdf(att);
-    } catch (err) {
-      console.warn(`[MergeDocs] Conversion failed for "${att.fileName}":`, err.message);
-    }
-    if (!pdfBytes) continue;
+  const conversionResults = await Promise.allSettled(
+    attRecords.map(async (att) => {
+      if (!att) return null;
+      const pdfBytes = await toSinglePdf(att).catch((err) => {
+        console.warn(`[MergeDocs] Conversion failed for "${att.fileName}":`, err.message);
+        return null;
+      });
+      return { att, pdfBytes };
+    })
+  );
 
+  for (const result of conversionResults) {
+    if (result.status !== 'fulfilled' || !result.value?.pdfBytes) continue;
+    const { att, pdfBytes } = result.value;
     try {
       const donor = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
       const pages = await merged.copyPages(donor, donor.getPageIndices());
@@ -723,13 +739,13 @@ async function saveAsPdf({ workflowId, formId, htmlContent, fileName: rawName })
 async function previewDocument(attachmentId, res) {
   const att = await getAttachment(attachmentId);
   if (!att) { res.status(404).json({ error: 'Document not found' }); return; }
+  await serveByKey(att.storageKey, att.fileName, att.mimeType, res);
+}
 
-  const buffer        = await read(att.storageKey);
-  const asciiFallback = att.fileName.replace(/[^\x20-\x7E]/g, '_');
-  const encoded       = encodeURIComponent(att.fileName);
-  res.setHeader('Content-Type', att.mimeType || 'application/octet-stream');
-  res.setHeader('Content-Disposition', `inline; filename="${asciiFallback}"; filename*=UTF-8''${encoded}`);
-  res.send(buffer);
+async function warmupBrowser() {
+  console.log('[Boot] Warming up Puppeteer browser...');
+  await getBrowser();
+  console.log('[Boot] Puppeteer browser ready');
 }
 
 module.exports = {
@@ -739,4 +755,5 @@ module.exports = {
   saveAsPdf,
   mergeDocs,
   previewDocument,
+  warmupBrowser,
 };

@@ -1,0 +1,224 @@
+'use client';
+
+import { useState, useEffect, useRef } from 'react';
+import { Send, X } from 'lucide-react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { workflowsApi } from '@/lib/api';
+import { useToast } from '@/components/ui/Toast';
+import { formatDateTime, cn } from '@/lib/utils';
+import type { ThreadMessage } from '@/types';
+
+interface ThreadViewProps {
+  messages: ThreadMessage[];
+  workflowId: string;
+  canReply?: boolean;
+}
+
+function MessageBubble({ msg, highlighted }: { msg: ThreadMessage; highlighted: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+  const isOut = msg.isOutbound;
+  const initial = (msg.senderName || msg.senderEmail || '?')[0].toUpperCase();
+
+  return (
+    <div
+      className={cn(
+        'rounded-xl border p-3 transition-all duration-700',
+        isOut
+          ? 'bg-[#1b3a6b]/5 border-[#1b3a6b]/20 ml-8'
+          : 'bg-white border-slate-200 mr-8',
+        highlighted && !isOut && 'ring-2 ring-blue-400 border-blue-300',
+      )}
+    >
+      {/* Header row */}
+      <div className="flex items-start justify-between gap-2 mb-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className={cn(
+            'w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0',
+            isOut ? 'bg-[#1b3a6b] text-white' : 'bg-slate-100 text-slate-600',
+          )}>
+            {initial}
+          </div>
+          <div className="min-w-0">
+            <span className="text-[12px] font-semibold text-slate-700">
+              {msg.senderName || msg.senderEmail || 'Unknown'}
+            </span>
+            {msg.senderName && msg.senderEmail && (
+              <span className="text-[10.5px] text-slate-400 ml-1 hidden sm:inline truncate">
+                &lt;{msg.senderEmail}&gt;
+              </span>
+            )}
+            {isOut && (
+              <span className="ml-1.5 text-[10px] font-semibold text-[#1b3a6b] bg-[#1b3a6b]/10 px-1.5 py-0.5 rounded-full">
+                You
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          {msg.isNew && (
+            <span className="text-[9.5px] font-bold text-blue-600 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded-full">
+              NEW
+            </span>
+          )}
+          <span className="text-[10.5px] text-slate-400 whitespace-nowrap">
+            {formatDateTime(msg.receivedAt)}
+          </span>
+        </div>
+      </div>
+
+      {/* Body */}
+      <div className="text-[12.5px] text-slate-600 leading-relaxed pl-8">
+        {expanded && msg.bodyHtml ? (
+          <div
+            className="prose prose-sm max-w-none text-slate-600"
+            dangerouslySetInnerHTML={{ __html: msg.bodyHtml }}
+          />
+        ) : (
+          <p className={cn(!expanded && 'line-clamp-4')}>
+            {msg.bodyPreview || '(no preview available)'}
+          </p>
+        )}
+        {(msg.bodyHtml || (msg.bodyPreview && msg.bodyPreview.length > 200)) && (
+          <button
+            onClick={() => setExpanded((p) => !p)}
+            className="text-[11px] text-[#1b3a6b] hover:underline mt-1.5 block"
+          >
+            {expanded ? 'Show less ↑' : 'Read more ↓'}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function ThreadView({ messages, workflowId, canReply = false }: ThreadViewProps) {
+  const qc = useQueryClient();
+  const { success, error: toastError } = useToast();
+  const [replyText, setReplyText] = useState('');
+  const [showReply, setShowReply] = useState(false);
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  // IDs of new (unread) messages — for the highlight ring
+  const [highlightedIds] = useState<Set<string>>(
+    () => new Set(messages.filter((m) => m.isNew).map((m) => m.id))
+  );
+
+  // Mark read + clear highlight after 3 s
+  useEffect(() => {
+    const hasNew = messages.some((m) => m.isNew);
+    if (!hasNew) return;
+    workflowsApi.markRead(workflowId)
+      .then(() => {
+        qc.invalidateQueries({ queryKey: ['workflows'] });
+        qc.invalidateQueries({ queryKey: ['emails'] });
+        qc.invalidateQueries({ queryKey: ['messages', workflowId] });
+        qc.invalidateQueries({ queryKey: ['workflow-messages', workflowId] });
+      })
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workflowId]);
+
+  // Scroll to bottom on open
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages.length]);
+
+  const replyMutation = useMutation({
+    mutationFn: (comment: string) => workflowsApi.replyToVendor(workflowId, comment),
+    onSuccess: () => {
+      success('Reply sent to vendor.');
+      setReplyText('');
+      setShowReply(false);
+      qc.invalidateQueries({ queryKey: ['messages', workflowId] });
+      qc.invalidateQueries({ queryKey: ['workflow-messages', workflowId] });
+      qc.invalidateQueries({ queryKey: ['emails'] });
+    },
+    onError: (err: unknown) => {
+      toastError(err instanceof Error ? err.message : 'Failed to send reply');
+    },
+  });
+
+  const handleSend = () => {
+    if (!replyText.trim() || replyMutation.isPending) return;
+    replyMutation.mutate(replyText.trim());
+  };
+
+  if (messages.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center flex-1 py-12 text-ce-muted">
+        <p className="text-[13px]">No email messages yet</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col h-full overflow-hidden">
+      {/* Message list */}
+      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+        {messages.map((msg) => (
+          <MessageBubble
+            key={msg.id}
+            msg={msg}
+            highlighted={highlightedIds.has(msg.id)}
+          />
+        ))}
+        <div ref={bottomRef} />
+      </div>
+
+      {/* Reply composer */}
+      {canReply && (
+        <div className="flex-shrink-0 border-t border-slate-200 bg-white">
+          {showReply ? (
+            <div className="p-3 space-y-2">
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                  Reply to vendor
+                </p>
+                <button
+                  onClick={() => { setShowReply(false); setReplyText(''); }}
+                  className="text-slate-300 hover:text-slate-500 transition-colors"
+                >
+                  <X size={13} />
+                </button>
+              </div>
+              <textarea
+                autoFocus
+                rows={4}
+                value={replyText}
+                onChange={(e) => setReplyText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) handleSend();
+                }}
+                placeholder="Type your reply to the vendor…"
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-[12.5px] outline-none resize-none focus:border-[#1b3a6b] focus:ring-2 focus:ring-[#1b3a6b]/10 transition-all text-slate-700 placeholder:text-slate-400"
+              />
+              <div className="flex items-center justify-between">
+                <p className="text-[10.5px] text-slate-400">Ctrl+Enter to send</p>
+                <button
+                  onClick={handleSend}
+                  disabled={!replyText.trim() || replyMutation.isPending}
+                  className="flex items-center gap-1.5 bg-[#1b3a6b] text-white text-[12px] font-semibold px-3 py-1.5 rounded-lg hover:bg-[#162d56] transition-colors disabled:opacity-40"
+                >
+                  {replyMutation.isPending ? (
+                    <><div className="h-3 w-3 rounded-full border-2 border-white border-t-transparent animate-spin" /> Sending…</>
+                  ) : (
+                    <><Send size={11} /> Send reply</>
+                  )}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="px-4 py-2.5">
+              <button
+                onClick={() => setShowReply(true)}
+                className="w-full flex items-center justify-center gap-1.5 text-[12px] font-medium text-[#1b3a6b] border border-[#1b3a6b]/30 bg-[#1b3a6b]/5 hover:bg-[#1b3a6b]/10 rounded-lg py-2 transition-colors"
+              >
+                <Send size={12} /> Reply to vendor
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

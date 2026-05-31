@@ -79,7 +79,7 @@ export default function OthersPage() {
       qc.invalidateQueries({ queryKey: ['others'] });
       qc.invalidateQueries({ queryKey: ['workflows'] });
       qc.invalidateQueries({ queryKey: ['emails'] });
-      router.push(`/workflows/${workflowId}`);
+      router.push(`/workflows/${workflowId}?from=/others`);
     } catch {
       setConverting(false);
     }

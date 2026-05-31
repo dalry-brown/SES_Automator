@@ -1,21 +1,24 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search, BarChart2, FileText, ExternalLink, ChevronRight, Mail, Pencil, BookOpen } from 'lucide-react';
+import { Search, BarChart2, FileText, ExternalLink, Mail, Pencil, BookOpen, MessageSquare } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { emailsApi, attachmentsApi, othersApi, workflowsApi } from '@/lib/api';
 import { useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/components/ui/Toast';
 import { useWorkflows } from '@/lib/hooks/useWorkflows';
+import { useAuth } from '@/components/providers/AuthProvider';
 import { StatusPill } from '@/components/ui/StatusPill';
 import { SplitPanel, PanelHeader, PanelBody, PanelFooter, PanelSection, MetaRow, PanelEmpty } from '@/components/ui/SplitPanel';
 import { AttachmentChip, AttachmentSidebarView } from '@/components/ui/AttachmentPreview';
+import { ThreadView } from '@/components/ui/ThreadView';
 import { PageSpinner } from '@/components/ui/Spinner';
 import { formatDateTime, formatDate, formatDraftEditor, cn } from '@/lib/utils';
 import type { ThreadMessage, WorkflowStatus, Attachment } from '@/types';
 
 type FilterKey = 'all' | 'draft' | WorkflowStatus;
+type SideTab = 'details' | 'thread';
 
 const FILTERS: { key: FilterKey; label: string }[] = [
   { key: 'all',              label: 'All' },
@@ -26,7 +29,6 @@ const FILTERS: { key: FilterKey; label: string }[] = [
   { key: 'sent',             label: 'Sent' },
   { key: 'closed',           label: 'Closed' },
 ];
-
 
 const ASSIGN_TYPES = ['Change order', 'PO top-up', 'PR', 'General enquiry', 'AP', 'Other'];
 
@@ -46,21 +48,19 @@ function groupByWorkflow(emails: ThreadMessage[]): ConversationGroup[] {
     const wfId = msg.workflowId;
     if (!map.has(wfId)) {
       map.set(wfId, {
-        workflowId:     wfId,
-        supplierName:   msg.supplierName,
-        status:         msg.status,
-        statusLabel:    msg.statusLabel,
+        workflowId:      wfId,
+        supplierName:    msg.supplierName,
+        status:          msg.status,
+        statusLabel:     msg.statusLabel,
         firstReceivedAt: msg.receivedAt,
         messages: [],
       });
     }
     const group = map.get(wfId)!;
     group.messages.push(msg);
-    // Keep earliest received date as parent date
     if (msg.receivedAt && group.firstReceivedAt && msg.receivedAt < group.firstReceivedAt) {
       group.firstReceivedAt = msg.receivedAt;
     }
-    // Status reflects the latest workflow state (same for all msgs in same wf)
     group.status      = msg.status;
     group.statusLabel = msg.statusLabel;
   }
@@ -68,17 +68,22 @@ function groupByWorkflow(emails: ThreadMessage[]): ConversationGroup[] {
 }
 
 export default function HomePage() {
-  const router = useRouter();
-  const qc = useQueryClient();
-  const { success, error: toastError } = useToast();
-  const [filter, setFilter]           = useState<FilterKey>('all');
-  const [search, setSearch]           = useState('');
-  const [selected, setSelected]       = useState<ThreadMessage | null>(null);
-  const [expanded, setExpanded]       = useState<Set<string>>(new Set());
-  const [previewAtt, setPreviewAtt]   = useState<Attachment | null>(null);
-  const [assigning, setAssigning]     = useState(false);
+  const router    = useRouter();
+  const qc        = useQueryClient();
+  const { success, error: toastError, warning: toastInfo } = useToast();
+  const { effectiveRole } = useAuth();
+  const isEditor = effectiveRole === 'editor' || effectiveRole === 'admin';
 
-  const { data: wfData }    = useWorkflows();
+  const [filter, setFilter]         = useState<FilterKey>('all');
+  const [search, setSearch]         = useState('');
+  const [selected, setSelected]     = useState<ConversationGroup | null>(null);
+  const [activeTab, setActiveTab]   = useState<SideTab>('details');
+  const [previewAtt, setPreviewAtt] = useState<Attachment | null>(null);
+  const [assigning, setAssigning]   = useState(false);
+
+  const prevNewMessageIds = useRef<Set<string>>(new Set());
+
+  const { data: wfData } = useWorkflows();
   const { data: emailsData, isLoading } = useQuery({
     queryKey: ['emails'],
     queryFn:  () => emailsApi.list(),
@@ -122,46 +127,43 @@ export default function HomePage() {
       );
     }
     return groupByWorkflow(list);
-  }, [emails, filter, search]);
+  }, [emails, filter, search, wfs]);
+
+  // Toast notification when a new vendor reply arrives (while page is open)
+  useEffect(() => {
+    const currentNewIds = new Set(
+      wfs.filter((w) => w.hasNewMessage).map((w) => w.id)
+    );
+    // Find IDs that are newly new (not in previous set)
+    const brandNew = [...currentNewIds].filter((id) => !prevNewMessageIds.current.has(id));
+    brandNew.forEach((id) => {
+      const wf = wfs.find((w) => w.id === id);
+      const name = wf?.supplierName ?? id;
+      toastInfo(`New message from ${name} — click to view`);
+    });
+    prevNewMessageIds.current = currentNewIds;
+  }, [wfs]);
 
   if (isLoading) return <PageSpinner />;
 
-  const toggleExpand = (wfId: string) => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(wfId)) next.delete(wfId);
-      else next.add(wfId);
-      return next;
-    });
-  };
-
-  const handleSelect = (msg: ThreadMessage) => {
-    setSelected(msg);
+  const handleSelect = (group: ConversationGroup) => {
+    setSelected(group);
     setPreviewAtt(null);
-  };
-
-  const handleGroupClick = (group: ConversationGroup) => {
-    if (group.messages.length === 1) {
-      handleSelect(group.messages[0]);
-    } else {
-      toggleExpand(group.workflowId);
-      // Also select the most recent message for the side panel
-      const latest = [...group.messages].sort(
-        (a, b) => new Date(b.receivedAt ?? 0).getTime() - new Date(a.receivedAt ?? 0).getTime()
-      )[0];
-      handleSelect(latest);
-    }
+    setActiveTab('details');
   };
 
   const handleAssign = async (category: string) => {
     if (!selected || assigning) return;
+    const latest = [...selected.messages].sort(
+      (a, b) => new Date(b.receivedAt ?? 0).getTime() - new Date(a.receivedAt ?? 0).getTime()
+    )[0];
     setAssigning(true);
     try {
       await othersApi.create({
         workflowId:   selected.workflowId ?? undefined,
         category,
         description:  category,
-        supplierName: selected.supplierName || selected.senderName || undefined,
+        supplierName: selected.supplierName || latest?.senderName || undefined,
       });
       if (selected.workflowId) {
         await workflowsApi.setStatus(selected.workflowId, 'other' as WorkflowStatus);
@@ -185,8 +187,11 @@ export default function HomePage() {
     }
   };
 
+  const latestMsg    = selected ? [...selected.messages].sort(
+    (a, b) => new Date(b.receivedAt ?? 0).getTime() - new Date(a.receivedAt ?? 0).getTime()
+  )[0] : null;
   const isUnprocessed = selected?.status === 'received';
-  const ccList = selected?.ccRecipients?.map((r) => r.emailAddress.address).join(', ');
+  const ccList = latestMsg?.ccRecipients?.map((r) => r.emailAddress.address).join(', ');
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
@@ -254,11 +259,9 @@ export default function HomePage() {
               ) : (
                 <div className="divide-y divide-ce-border">
                   {groups.map((group) => {
-                    const isOpen   = expanded.has(group.workflowId);
-                    const isMulti  = group.messages.length > 1;
-                    const isSelWf  = selected?.workflowId === group.workflowId;
-
+                    const isSelWf = selected?.workflowId === group.workflowId;
                     const wf = wfs.find((w) => w.id === group.workflowId);
+                    const hasNew = !!wf?.hasNewMessage;
                     const lockAgeMin = wf?.lockedAt
                       ? (Date.now() - new Date(wf.lockedAt).getTime()) / 60000
                       : 999;
@@ -268,113 +271,81 @@ export default function HomePage() {
                       : null;
                     const isDraft = !!wf?.hasDraft && wf.status === 'received';
                     const draftEditor = isDraft ? formatDraftEditor(wf?.draftEditorName ?? null) : null;
+                    const msgCount = group.messages.length;
 
                     return (
-                      <div key={group.workflowId}>
-                        {/* Parent row */}
-                        <div
-                          onClick={() => handleGroupClick(group)}
-                          className={cn(
-                            'flex items-center gap-3 px-5 py-3.5 cursor-pointer transition-colors group',
-                            isSelWf && !isOpen ? 'bg-ce-bg border-l-2 border-ce-navy' : 'hover:bg-ce-bg/60',
-                            isOpen && 'bg-slate-50',
+                      <div
+                        key={group.workflowId}
+                        onClick={() => handleSelect(group)}
+                        className={cn(
+                          'flex items-center gap-3 px-5 py-3.5 cursor-pointer transition-colors group',
+                          isSelWf
+                            ? 'bg-ce-bg border-l-2 border-ce-navy'
+                            : 'hover:bg-ce-bg/60',
+                        )}
+                      >
+                        {/* Mail icon with new-message dot */}
+                        <div className="flex-shrink-0 w-7 flex items-center justify-center relative">
+                          <Mail size={14} className="text-ce-muted" />
+                          {hasNew && (
+                            <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-blue-500 ring-2 ring-white" />
                           )}
-                        >
-                          {/* Expand chevron / mail icon */}
-                          <div className="flex-shrink-0 w-7 flex items-center justify-center">
-                            {isMulti ? (
-                              <div className={cn('transition-transform', isOpen && 'rotate-90')}>
-                                <ChevronRight size={14} className="text-ce-muted" />
-                              </div>
-                            ) : (
-                              <Mail size={14} className="text-ce-muted" />
+                        </div>
+
+                        {/* Main content */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-0.5">
+                            <span className="text-[13px] font-semibold text-ce-navy font-mono flex-shrink-0">
+                              {group.workflowId}
+                            </span>
+                            <span className={cn(
+                              'text-[13px] font-medium truncate',
+                              hasNew ? 'text-ce-text font-semibold' : 'text-ce-text',
+                            )}>
+                              {group.supplierName || group.messages[0]?.senderName || 'Unknown sender'}
+                            </span>
+                            {msgCount > 1 && (
+                              <span className="flex-shrink-0 bg-ce-navy/10 text-ce-navy text-[11px] font-semibold px-1.5 py-0.5 rounded-full">
+                                {msgCount}
+                              </span>
+                            )}
+                            {isDraft && !isBeingEdited && (
+                              <span
+                                title={`Draft saved by ${wf?.draftEditorName ?? 'a cost engineer'}`}
+                                className="flex-shrink-0 flex items-center gap-1 bg-sky-50 text-sky-600 border border-sky-200 text-[11px] font-semibold px-1.5 py-0.5 rounded-full"
+                              >
+                                <BookOpen size={9} />
+                                Draft{draftEditor ? ` · ${draftEditor}` : ''}
+                              </span>
+                            )}
+                            {isBeingEdited && (
+                              <span
+                                title={`${editorName} is creating the SES form`}
+                                className="flex-shrink-0 flex items-center gap-1 bg-amber-100 text-amber-700 text-[11px] font-semibold px-1.5 py-0.5 rounded-full"
+                              >
+                                <Pencil size={9} />
+                                In progress
+                              </span>
+                            )}
+                            {hasNew && (
+                              <span className="flex-shrink-0 flex items-center gap-1 bg-blue-50 text-blue-600 border border-blue-200 text-[11px] font-semibold px-1.5 py-0.5 rounded-full">
+                                <MessageSquare size={9} />
+                                New reply
+                              </span>
                             )}
                           </div>
-
-                          {/* Main content */}
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 mb-0.5">
-                              <span className="text-[13px] font-semibold text-ce-navy font-mono flex-shrink-0">
-                                {group.workflowId}
-                              </span>
-                              <span className="text-[13px] font-medium text-ce-text truncate">
-                                {group.supplierName || group.messages[0]?.senderName || 'Unknown sender'}
-                              </span>
-                              {isMulti && (
-                                <span className="flex-shrink-0 bg-ce-navy/10 text-ce-navy text-[11px] font-semibold px-1.5 py-0.5 rounded-full">
-                                  {group.messages.length}
-                                </span>
-                              )}
-                              {isDraft && !isBeingEdited && (
-                                <span
-                                  title={`Draft saved by ${wf?.draftEditorName ?? 'a cost engineer'}`}
-                                  className="flex-shrink-0 flex items-center gap-1 bg-sky-50 text-sky-600 border border-sky-200 text-[11px] font-semibold px-1.5 py-0.5 rounded-full"
-                                >
-                                  <BookOpen size={9} />
-                                  Draft{draftEditor ? ` · ${draftEditor}` : ''}
-                                </span>
-                              )}
-                              {isBeingEdited && (
-                                <span
-                                  title={`${editorName} is creating the SES form`}
-                                  className="flex-shrink-0 flex items-center gap-1 bg-amber-100 text-amber-700 text-[11px] font-semibold px-1.5 py-0.5 rounded-full"
-                                >
-                                  <Pencil size={9} />
-                                  In progress
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-[12px] text-ce-muted truncate">
-                              {group.messages[0]?.subject || '(no subject)'}
-                            </div>
-                          </div>
-
-                          {/* Right: date + status */}
-                          <div className="flex-shrink-0 flex flex-col items-end gap-1">
-                            <div className="text-[12px] text-ce-muted">
-                              {formatDate(group.firstReceivedAt, { day: 'numeric', month: 'short' })}
-                            </div>
-                            <StatusPill status={group.status} small />
+                          <div className="text-[12px] text-ce-muted truncate">
+                            {group.messages[0]?.subject || '(no subject)'}
                           </div>
                         </div>
 
-                        {/* Child rows (expanded) */}
-                        {isOpen && isMulti && (
-                          <div className="bg-slate-50 border-b border-ce-border">
-                            {group.messages.map((msg, idx) => {
-                              const isSelMsg = selected?.id === msg.id;
-                              return (
-                                <div
-                                  key={msg.id}
-                                  onClick={(e) => { e.stopPropagation(); handleSelect(msg); }}
-                                  className={cn(
-                                    'flex items-center gap-3 pl-12 pr-5 py-2.5 cursor-pointer transition-colors border-t border-ce-border/50',
-                                    isSelMsg
-                                      ? 'bg-[#eef3fb] border-l-2 border-ce-navy'
-                                      : 'hover:bg-white/80',
-                                  )}
-                                >
-                                  <div className="flex-shrink-0 w-5 h-5 rounded-full bg-ce-muted/10 flex items-center justify-center text-[10px] font-bold text-ce-muted">
-                                    {idx + 1}
-                                  </div>
-                                  <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-2 mb-0.5">
-                                      <span className="text-[12.5px] font-medium text-ce-text truncate">
-                                        {msg.senderName || msg.senderEmail || 'Unknown'}
-                                      </span>
-                                    </div>
-                                    <div className="text-[11.5px] text-ce-muted truncate">
-                                      {msg.subject || '(no subject)'}
-                                    </div>
-                                  </div>
-                                  <div className="flex-shrink-0 text-[11.5px] text-ce-hint">
-                                    {formatDate(msg.receivedAt, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
-                                  </div>
-                                </div>
-                              );
-                            })}
+                        {/* Right: date + status */}
+                        <div className="flex-shrink-0 flex flex-col items-end gap-1">
+                          <div className="text-[12px] text-ce-muted">
+                            {formatDate(group.firstReceivedAt, { day: 'numeric', month: 'short' })}
                           </div>
-                        )}
+                          <StatusPill status={group.status} small />
+                        </div>
                       </div>
                     );
                   })}
@@ -390,12 +361,45 @@ export default function HomePage() {
             <div className="flex flex-col h-full overflow-hidden">
               <PanelHeader
                 wfId={selected.workflowId ?? undefined}
-                title={selected.supplierName || selected.senderName || 'Unknown sender'}
-                subtitle={selected.subject ?? undefined}
+                title={selected.supplierName || latestMsg?.senderName || 'Unknown sender'}
+                subtitle={latestMsg?.subject ?? undefined}
                 onPopout={selected.workflowId ? handlePopout : undefined}
               />
 
-              {previewAtt ? (
+              {/* Tab bar */}
+              <div className="flex border-b border-ce-border flex-shrink-0 bg-white px-4">
+                {(['details', 'thread'] as SideTab[]).map((tab) => (
+                  <button
+                    key={tab}
+                    onClick={() => setActiveTab(tab)}
+                    className={cn(
+                      'px-3 py-2 text-[12.5px] font-medium border-b-2 transition-colors capitalize',
+                      activeTab === tab
+                        ? 'border-ce-navy text-ce-navy'
+                        : 'border-transparent text-ce-muted hover:text-ce-text',
+                    )}
+                  >
+                    {tab === 'thread' ? (
+                      <span className="flex items-center gap-1">
+                        Thread
+                        {selected.messages.length > 1 && (
+                          <span className="bg-ce-navy/10 text-ce-navy text-[10px] font-bold px-1 rounded-full">
+                            {selected.messages.length}
+                          </span>
+                        )}
+                      </span>
+                    ) : 'Details'}
+                  </button>
+                ))}
+              </div>
+
+              {activeTab === 'thread' ? (
+                <ThreadView
+                  messages={selected.messages}
+                  workflowId={selected.workflowId}
+                  canReply={isEditor}
+                />
+              ) : previewAtt ? (
                 <AttachmentSidebarView
                   attachment={previewAtt}
                   onClose={() => setPreviewAtt(null)}
@@ -404,15 +408,15 @@ export default function HomePage() {
                 <>
                   <PanelBody className="gap-3">
                     <PanelSection label="Email details">
-                      <MetaRow label="From"     value={selected.senderEmail} />
-                      <MetaRow label="To"       value={selected.toRecipients?.map((r) => r.emailAddress.address).join(', ')} />
+                      <MetaRow label="From"     value={latestMsg?.senderEmail} />
+                      <MetaRow label="To"       value={latestMsg?.toRecipients?.map((r) => r.emailAddress.address).join(', ')} />
                       {ccList && <MetaRow label="CC" value={ccList} />}
-                      <MetaRow label="Received" value={formatDateTime(selected.receivedAt)} />
+                      <MetaRow label="Received" value={formatDateTime(latestMsg?.receivedAt ?? null)} />
                     </PanelSection>
 
                     <PanelSection label="Body">
                       <div className="bg-ce-bg border border-ce-border rounded-lg p-2.5 text-[13px] text-ce-text leading-relaxed max-h-[100px] overflow-y-auto whitespace-pre-wrap">
-                        {selected.bodyPreview ?? '(no body preview)'}
+                        {latestMsg?.bodyPreview ?? '(no body preview)'}
                       </div>
                     </PanelSection>
 
@@ -434,7 +438,7 @@ export default function HomePage() {
                       <PanelSection label="Assign this email">
                         <div className="grid grid-cols-2 gap-1.5">
                           <button
-                            onClick={() => selected.workflowId && router.push(`/workflows/${selected.workflowId}`)}
+                            onClick={() => selected.workflowId && router.push(`/workflows/${selected.workflowId}?from=/home`)}
                             className="col-span-2 bg-ce-navy text-white rounded-lg py-2.5 px-3 text-[12px] font-medium hover:bg-ce-navy2 transition-colors flex items-center justify-center gap-1.5"
                           >
                             <FileText size={13} /> Open / Create SES workflow
@@ -459,7 +463,7 @@ export default function HomePage() {
                       <div className="text-[12px] text-ce-muted text-center py-1">Choose an assignment above</div>
                     ) : (
                       <button
-                        onClick={() => selected.workflowId && router.push(`/workflows/${selected.workflowId}`)}
+                        onClick={() => selected.workflowId && router.push(`/workflows/${selected.workflowId}?from=/home`)}
                         className="w-full bg-ce-navy text-white text-[13px] font-medium py-2 rounded-lg hover:bg-ce-navy2 transition-colors flex items-center justify-center gap-1.5"
                       >
                         <ExternalLink size={13} /> View SES form

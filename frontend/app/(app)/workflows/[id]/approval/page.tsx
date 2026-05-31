@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { ArrowLeft, FileText, ExternalLink, CheckCircle, AlertCircle, XCircle, SkipForward, Send } from 'lucide-react';
 import { PageSpinner } from '@/components/ui/Spinner';
 import { StatusPill } from '@/components/ui/StatusPill';
@@ -10,7 +10,7 @@ import { SignaturePanel } from '@/components/approval/SignaturePanel';
 import { useApprovalData } from '@/lib/hooks/useApproval';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { documentsApi, sesDocumentsApi } from '@/lib/api';
-import { formatCurrency, formatDate, cn } from '@/lib/utils';
+import { formatCurrency, formatDate, cn, inferBackHref } from '@/lib/utils';
 import type { SesDocument } from '@/types';
 
 // ── Per-document decision ─────────────────────────────────────────────────────
@@ -159,7 +159,8 @@ function DocDecisionRow({
 // ── Page ───────────────────────────────────────────────────────────────────────
 export default function ApprovalPage() {
   const { id } = useParams<{ id: string }>();
-  const router  = useRouter();
+  const router       = useRouter();
+  const searchParams = useSearchParams();
   const { effectiveRole, user } = useAuth();
   const isChView = effectiveRole === 'user';
 
@@ -231,8 +232,9 @@ export default function ApprovalPage() {
       <div className="border-b border-slate-200 bg-white px-4 py-3 flex-shrink-0">
         <div className="flex items-center gap-3">
           <button
-            onClick={() => router.push('/pending-approval')}
+            onClick={() => router.push(searchParams.get('from') ?? inferBackHref(workflow.status))}
             className="flex-shrink-0 rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors"
+            title="Back"
           >
             <ArrowLeft className="h-4 w-4" />
           </button>

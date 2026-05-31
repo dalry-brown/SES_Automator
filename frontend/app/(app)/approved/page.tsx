@@ -128,19 +128,19 @@ function EditorApprovedPanel({ workflow }: { workflow: Workflow }) {
       </PanelBody>
       <PanelFooter>
         <button
-          onClick={() => router.push(`/workflows/${workflow.id}/approval`)}
+          onClick={() => router.push(`/workflows/${workflow.id}/approval?from=/approved`)}
           className="w-full bg-white border border-ce-border text-[13px] font-medium py-2 rounded-lg text-ce-muted hover:bg-ce-bg transition-colors flex items-center justify-center gap-1.5"
         >
           <Eye size={13} /> View signed document
         </button>
         <button
-          onClick={() => router.push(`/workflows/${workflow.id}/approval`)}
+          onClick={() => router.push(`/workflows/${workflow.id}/approval?from=/approved`)}
           className="w-full bg-ce-amber text-ce-navy3 text-[13px] font-medium py-2 rounded-lg hover:bg-ce-amber2 transition-colors flex items-center justify-center gap-1.5"
         >
           <Send size={13} /> Send to vendor
         </button>
         <button
-          onClick={() => router.push(`/workflows/${workflow.id}`)}
+          onClick={() => router.push(`/workflows/${workflow.id}?from=/approved`)}
           className="w-full bg-white border border-ce-border text-[13px] font-medium py-2 rounded-lg text-ce-muted hover:bg-ce-bg transition-colors flex items-center justify-center gap-1.5"
         >
           <Edit size={13} /> Edit form
@@ -280,7 +280,7 @@ export default function ApprovedPage() {
                         </td>
                         <td>
                           <button
-                            onClick={(e) => { e.stopPropagation(); router.push(`/workflows/${wf.id}/approval`); }}
+                            onClick={(e) => { e.stopPropagation(); router.push(`/workflows/${wf.id}/approval?from=/approved`); }}
                             className="inline-flex items-center gap-1 bg-ce-amber text-ce-navy3 border-ce-amber border text-[12px] font-medium py-1 px-2.5 rounded-lg hover:bg-ce-amber2 cursor-pointer transition-colors"
                           >
                             <Send size={11} /> Send to vendor
@@ -298,7 +298,7 @@ export default function ApprovedPage() {
           !selected ? (
             <PanelEmpty message={isChView ? 'Select a workflow to view details' : 'Select a workflow to view approval details'} />
           ) : isChView ? (
-            <ChApprovedPanel workflow={selected} onOpen={() => router.push(`/workflows/${selected.id}/approval`)} />
+            <ChApprovedPanel workflow={selected} onOpen={() => router.push(`/workflows/${selected.id}/approval?from=/approved`)} />
           ) : (
             <EditorApprovedPanel workflow={selected} />
           )

@@ -34,6 +34,28 @@ export function formatDraftEditor(name: string | null | undefined): string {
   return `${parts[0]}.${parts[parts.length - 1]}`;
 }
 
+export function inferBackHref(status: string): string {
+  switch (status) {
+    case 'received':
+    case 'in_progress':
+      return '/home';
+    case 'pending_approval':
+    case 'queried':
+    case 'returned':
+      return '/pending-approval';
+    case 'approved':
+      return '/approved';
+    case 'sent':
+    case 'closed':
+    case 'cancelled':
+      return '/archive';
+    case 'other':
+      return '/others';
+    default:
+      return '/home';
+  }
+}
+
 export function truncate(str: string | null | undefined, max = 40) {
   if (!str) return '—';
   return str.length <= max ? str : str.slice(0, max - 1) + '…';

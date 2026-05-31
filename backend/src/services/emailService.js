@@ -21,8 +21,10 @@ async function ingestEmail(messageId) {
   const existingWf = await findWorkflowByConversationId(conversationId);
   let workflowId;
 
+  let isNewMessage = false;
   if (existingWf) {
     workflowId = existingWf.id;
+    isNewMessage = true; // vendor reply on an existing thread
     console.log(`[EmailService] Thread match → workflow ${workflowId}`);
   } else {
     // Duplicate invoice warning (same supplier + invoice number)
@@ -71,6 +73,8 @@ async function ingestEmail(messageId) {
     bodyHtml:     body?.contentType === 'html' ? body.content : null,
     toRecipients: toRecipients ?? null,
     ccRecipients: ccRecipients ?? null,
+    isNew:        isNewMessage,
+    isOutbound:   false,
   });
 
   // ── Attachments ───────────────────────────────────────────────────────────

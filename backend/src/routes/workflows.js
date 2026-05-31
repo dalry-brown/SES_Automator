@@ -92,6 +92,26 @@ router.post('/:id/close', authenticate, async (req, res, next) => {
   }
 });
 
+// POST /api/workflows/:id/reply — reply to vendor in the email thread (editor+)
+router.post('/:id/reply', [authenticate, requireRole('editor')], async (req, res, next) => {
+  const { comment } = req.body;
+  if (!comment || !comment.trim()) return res.status(400).json({ error: 'comment is required' });
+  try {
+    const { replyToVendor } = require('../services/approvalService');
+    const result = await replyToVendor(req.params.id, req.user, comment.trim());
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
+// POST /api/workflows/:id/mark-read — clear is_new flag on thread messages
+router.post('/:id/mark-read', authenticate, async (req, res, next) => {
+  try {
+    const { markMessagesRead } = require('../services/threadService');
+    await markMessagesRead(req.params.id);
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
 // POST /api/workflows/:id/lock — acquire WIP lock
 router.post('/:id/lock', authenticate, async (req, res, next) => {
   try {

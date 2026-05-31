@@ -14,16 +14,21 @@ async function listWorkflows(user) {
        lock_user.email AS locked_by_email,
        (sf.id IS NOT NULL)  AS has_draft,
        draft_user.name  AS draft_editor_name,
-       draft_user.email AS draft_editor_email
+       draft_user.email AS draft_editor_email,
+       EXISTS (
+         SELECT 1 FROM thread_messages tm
+         WHERE tm.workflow_id = w.id AND tm.is_new = TRUE
+       ) AS has_new_message
      FROM workflows w
      LEFT JOIN statuses s        ON s.code        = w.status
      LEFT JOIN users lock_user   ON lock_user.id  = w.locked_by
      LEFT JOIN ses_forms sf      ON sf.workflow_id = w.id
-     LEFT JOIN users draft_user  ON draft_user.id = (
+     LEFT JOIN LATERAL (
        SELECT fv.created_by FROM form_versions fv
        WHERE fv.form_id = sf.id
        ORDER BY fv.version_number DESC LIMIT 1
-     )
+     ) latest_fv ON true
+     LEFT JOIN users draft_user  ON draft_user.id = latest_fv.created_by
      ${where}
      ORDER BY w.created_at DESC`,
     params
@@ -45,11 +50,12 @@ async function getWorkflow(id, user) {
      LEFT JOIN statuses s       ON s.code        = w.status
      LEFT JOIN users lock_user  ON lock_user.id  = w.locked_by
      LEFT JOIN ses_forms sf     ON sf.workflow_id = w.id
-     LEFT JOIN users draft_user ON draft_user.id = (
+     LEFT JOIN LATERAL (
        SELECT fv.created_by FROM form_versions fv
        WHERE fv.form_id = sf.id
        ORDER BY fv.version_number DESC LIMIT 1
-     )
+     ) latest_fv ON true
+     LEFT JOIN users draft_user ON draft_user.id = latest_fv.created_by
      WHERE w.id = $1`,
     [id]
   );

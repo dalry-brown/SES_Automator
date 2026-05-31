@@ -282,7 +282,7 @@ export default function InboxPage() {
                     <PanelSection label="Assign this email">
                       <div className="grid grid-cols-2 gap-1.5">
                         <button
-                          onClick={() => selected.workflowId && router.push(`/workflows/${selected.workflowId}`)}
+                          onClick={() => selected.workflowId && router.push(`/workflows/${selected.workflowId}?from=/inbox`)}
                           className="col-span-2 bg-ce-navy text-white rounded-lg py-2.5 px-3 text-[12px] font-medium hover:bg-ce-navy2 transition-colors flex items-center justify-center gap-1.5"
                         >
                           <FileText size={13} /> Open / Create SES workflow
@@ -303,7 +303,7 @@ export default function InboxPage() {
 
                   <PanelFooter>
                     <button
-                      onClick={() => selected.workflowId && router.push(`/workflows/${selected.workflowId}`)}
+                      onClick={() => selected.workflowId && router.push(`/workflows/${selected.workflowId}?from=/inbox`)}
                       className="w-full bg-ce-navy text-white text-[13px] font-medium py-2 rounded-lg hover:bg-ce-navy2 transition-colors flex items-center justify-center gap-1.5"
                     >
                       <FileText size={13} /> Open SES form

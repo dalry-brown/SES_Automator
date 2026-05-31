@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { BlobServiceClient } = require('@azure/storage-blob');
+const { BlobServiceClient, BlobSASPermissions, generateBlobSASQueryParameters, StorageSharedKeyCredential } = require('@azure/storage-blob');
 const { v4: uuidv4 } = require('uuid');
 const { insertAttachment, getAttachment } = require('../db/queries/attachments');
 
@@ -58,12 +58,24 @@ async function serveAttachment(attachmentId, res) {
 
   if (STORAGE_MODE === 'azure') {
     const blobClient = _containerClient().getBlockBlobClient(attachment.storageKey);
-    const download = await blobClient.download(0);
-    const asciiFallback = attachment.fileName.replace(/[^\x20-\x7E]/g, '_');
-    const encoded = encodeURIComponent(attachment.fileName);
-    res.setHeader('Content-Type', attachment.mimeType || 'application/octet-stream');
-    res.setHeader('Content-Disposition', `inline; filename="${asciiFallback}"; filename*=UTF-8''${encoded}`);
-    download.readableStreamBody.pipe(res);
+    try {
+      const sasUrl = await blobClient.generateSasUrl({
+        permissions: BlobSASPermissions.parse('r'),
+        expiresOn: new Date(Date.now() + 3_600_000),
+        contentType: attachment.mimeType || 'application/octet-stream',
+        contentDisposition: `inline; filename="${attachment.fileName.replace(/[^\x20-\x7E]/g, '_')}"`,
+      });
+      res.redirect(302, sasUrl);
+    } catch (err) {
+      // generateSasUrl requires account key auth; fall back to streaming if using SAS conn string
+      console.warn('[Storage] SAS generation failed, falling back to stream:', err.message);
+      const download = await blobClient.download(0);
+      const asciiFallback = attachment.fileName.replace(/[^\x20-\x7E]/g, '_');
+      const encoded = encodeURIComponent(attachment.fileName);
+      res.setHeader('Content-Type', attachment.mimeType || 'application/octet-stream');
+      res.setHeader('Content-Disposition', `inline; filename="${asciiFallback}"; filename*=UTF-8''${encoded}`);
+      download.readableStreamBody.pipe(res);
+    }
     return;
   }
 
@@ -91,6 +103,36 @@ async function serveAttachment(attachmentId, res) {
   stream.pipe(res);
 }
 
+async function serveByKey(storageKey, fileName, mimeType, res) {
+  if (STORAGE_MODE === 'azure') {
+    const blobClient = _containerClient().getBlockBlobClient(storageKey);
+    try {
+      const sasUrl = await blobClient.generateSasUrl({
+        permissions: BlobSASPermissions.parse('r'),
+        expiresOn: new Date(Date.now() + 3_600_000),
+        contentType: mimeType || 'application/octet-stream',
+        contentDisposition: `inline; filename="${(fileName || 'file').replace(/[^\x20-\x7E]/g, '_')}"`,
+      });
+      res.redirect(302, sasUrl);
+    } catch (err) {
+      console.warn('[Storage] SAS generation failed, falling back to stream:', err.message);
+      const download = await blobClient.download(0);
+      res.setHeader('Content-Type', mimeType || 'application/octet-stream');
+      res.setHeader('Content-Disposition', `inline; filename="${(fileName || 'file').replace(/[^\x20-\x7E]/g, '_')}"`);
+      download.readableStreamBody.pipe(res);
+    }
+    return;
+  }
+
+  const filePath = path.join(LOCAL_UPLOADS, storageKey);
+  if (!fs.existsSync(filePath)) { res.status(404).json({ error: 'File not found' }); return; }
+  const stat = fs.statSync(filePath);
+  res.setHeader('Content-Type', mimeType || 'application/octet-stream');
+  res.setHeader('Content-Disposition', `inline; filename="${(fileName || 'file').replace(/[^\x20-\x7E]/g, '_')}"`);
+  res.setHeader('Content-Length', stat.size);
+  fs.createReadStream(filePath).pipe(res);
+}
+
 async function saveUploadedAttachment(file, workflowId, user) {
   const buffer = fs.readFileSync(file.path);
   const { storageKey, fileName } = await save(buffer, file.originalname, workflowId);
@@ -109,4 +151,4 @@ async function saveUploadedAttachment(file, workflowId, user) {
   return attachment;
 }
 
-module.exports = { save, read, remove, serveAttachment, saveUploadedAttachment };
+module.exports = { save, read, remove, serveAttachment, serveByKey, saveUploadedAttachment };

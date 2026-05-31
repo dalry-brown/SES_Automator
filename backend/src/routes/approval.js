@@ -28,6 +28,7 @@ const recipientSchema = Joi.object({
 const sendToVendorSchema = Joi.object({
   toRecipients: Joi.array().items(recipientSchema).optional(),
   ccRecipients: Joi.array().items(recipientSchema).optional(),
+  body:         Joi.string().allow('').optional(),
 });
 
 function svc() { return require('../services/approvalService'); }

@@ -67,31 +67,28 @@ async function getApprovalPageData(workflowId, user) {
     throw err;
   }
 
-  const { rows: docRows } = await pool.query(
-    'SELECT * FROM ses_docs WHERE workflow_id = $1', [workflowId]
-  );
+  const [
+    { rows: docRows },
+    { rows: sesDocumentRows },
+    { rows: eventRows },
+    { rows: lockRows },
+  ] = await Promise.all([
+    pool.query('SELECT * FROM ses_docs WHERE workflow_id = $1', [workflowId]),
+    pool.query('SELECT * FROM ses_documents WHERE workflow_id = $1 ORDER BY form_index ASC', [workflowId]),
+    pool.query(
+      `SELECT ae.*, u.name AS user_name, u.email AS user_email
+       FROM approval_events ae
+       JOIN users u ON u.id = ae.user_id
+       WHERE ae.workflow_id = $1
+       ORDER BY ae.created_at ASC`,
+      [workflowId]
+    ),
+    workflow.lockedBy
+      ? pool.query('SELECT name, email FROM users WHERE id = $1', [workflow.lockedBy])
+      : Promise.resolve({ rows: [] }),
+  ]);
 
-  const { rows: sesDocumentRows } = await pool.query(
-    'SELECT * FROM ses_documents WHERE workflow_id = $1 ORDER BY form_index ASC',
-    [workflowId]
-  );
-
-  const { rows: eventRows } = await pool.query(
-    `SELECT ae.*, u.name AS user_name, u.email AS user_email
-     FROM approval_events ae
-     JOIN users u ON u.id = ae.user_id
-     WHERE ae.workflow_id = $1
-     ORDER BY ae.created_at ASC`,
-    [workflowId]
-  );
-
-  let lockedByUser = null;
-  if (workflow.lockedBy) {
-    const { rows: lockRows } = await pool.query(
-      'SELECT name, email FROM users WHERE id = $1', [workflow.lockedBy]
-    );
-    lockedByUser = lockRows[0] || null;
-  }
+  const lockedByUser = lockRows[0] || null;
 
   return {
     workflow,
@@ -126,20 +123,16 @@ async function signWorkflow(workflowId, user, body) {
     throw err;
   }
 
-  const { rows: docRows } = await pool.query(
-    'SELECT * FROM ses_docs WHERE workflow_id = $1', [workflowId]
-  );
+  const [{ rows: docRows }, { rows: sesDocNameRows }] = await Promise.all([
+    pool.query('SELECT * FROM ses_docs WHERE workflow_id = $1', [workflowId]),
+    pool.query('SELECT file_name FROM ses_documents WHERE workflow_id = $1 ORDER BY form_index ASC LIMIT 1', [workflowId]),
+  ]);
   if (!docRows.length) {
     const err = new Error('No merged document found — generate a preview first');
     err.status = 400;
     throw err;
   }
   const sesDoc = camelizeRow(docRows[0]);
-
-  const { rows: sesDocNameRows } = await pool.query(
-    'SELECT file_name FROM ses_documents WHERE workflow_id = $1 ORDER BY form_index ASC LIMIT 1',
-    [workflowId]
-  );
   const mergedFileName = sesDocNameRows[0]?.file_name || `SES_${workflowId}.pdf`;
 
   const pdfBytes = await read(sesDoc.storageKey);
@@ -251,22 +244,18 @@ async function signWorkflow(workflowId, user, body) {
     client.release();
   }
 
-  // Notify CE that the document has been approved so they can do a final review
-  const submitter = await getSubmitterEmail(workflowId);
-  if (submitter) {
-    try {
-      await sendDirectEmail(
-        submitter.email,
-        `[SES Automator] Workflow ${workflowId} Approved`,
-        `<p>Hi ${submitter.name},</p>
-         <p>Workflow <strong>${workflowId}</strong> has been <strong>approved</strong> by ${user.name}.</p>
-         <p>Please do a final review and then send it to the vendor when ready.</p>
-         <p><a href="${approvalLink(workflowId)}">View workflow</a></p>`
-      );
-    } catch (e) {
-      console.error('[ApprovalService] CE notification failed:', e.message);
-    }
-  }
+  // Fire-and-forget: notify CE without blocking the HTTP response
+  getSubmitterEmail(workflowId).then((submitter) => {
+    if (!submitter) return;
+    return sendDirectEmail(
+      submitter.email,
+      `[SES Automator] Workflow ${workflowId} Approved`,
+      `<p>Hi ${submitter.name},</p>
+       <p>Workflow <strong>${workflowId}</strong> has been <strong>approved</strong> by ${user.name}.</p>
+       <p>Please do a final review and then send it to the vendor when ready.</p>
+       <p><a href="${approvalLink(workflowId)}">View workflow</a></p>`
+    );
+  }).catch((e) => console.error('[ApprovalService] CE notification failed:', e.message));
 
   return { message: 'Workflow approved', workflowId, docHash };
 }
@@ -346,21 +335,17 @@ async function returnWorkflow(workflowId, user, comment) {
     );
     await client.query('COMMIT');
 
-    // Notify CE submitter directly — never reply to the vendor email thread
-    const submitter = await getSubmitterEmail(workflowId);
-    if (submitter) {
-      try {
-        const replyBody = `
-          <p>Hi ${submitter.name},</p>
-          <p>Contract holder <strong>${user.name}</strong> has returned workflow <strong>${workflowId}</strong> for corrections.</p>
-          <blockquote style="border-left:3px solid #e44;padding-left:12px;color:#555">${comment}</blockquote>
-          <p>Please update the form and resubmit for approval.</p>
-          <p><a href="${FRONTEND_URL}/workflows/${workflowId}">Edit workflow</a></p>`;
-        await sendDirectEmail(submitter.email, `[SES Automator] Workflow ${workflowId} Returned for Corrections`, replyBody);
-      } catch (e) {
-        console.error('[ApprovalService] Return notification failed:', e.message);
-      }
-    }
+    // Fire-and-forget: notify CE submitter without blocking the HTTP response
+    getSubmitterEmail(workflowId).then((submitter) => {
+      if (!submitter) return;
+      const replyBody = `
+        <p>Hi ${submitter.name},</p>
+        <p>Contract holder <strong>${user.name}</strong> has returned workflow <strong>${workflowId}</strong> for corrections.</p>
+        <blockquote style="border-left:3px solid #e44;padding-left:12px;color:#555">${comment}</blockquote>
+        <p>Please update the form and resubmit for approval.</p>
+        <p><a href="${FRONTEND_URL}/workflows/${workflowId}">Edit workflow</a></p>`;
+      return sendDirectEmail(submitter.email, `[SES Automator] Workflow ${workflowId} Returned for Corrections`, replyBody);
+    }).catch((e) => console.error('[ApprovalService] Return notification failed:', e.message));
 
     return camelizeRow(rows[0]);
   } catch (err) {
@@ -424,20 +409,16 @@ async function rerouteWorkflow(workflowId, user, { email, name }) {
 
     await client.query('COMMIT');
 
-    // Email new contract holder
-    try {
-      await sendDirectEmail(
-        email,
-        `[SES Automator] Document Approval Required — ${workflowId}`,
-        `<p>Hi ${name},</p>
-         <p><strong>${user.name}</strong> has assigned you to approve workflow <strong>${workflowId}</strong>.</p>
-         <p>Please review the document and approve or return it at your earliest convenience.</p>
-         <p><a href="${approvalLink(workflowId)}" style="display:inline-block;padding:10px 20px;background:#1b3a6b;color:#fff;border-radius:6px;text-decoration:none">Review &amp; Approve</a></p>
-         <p style="color:#888;font-size:12px">If the button does not work, copy this link: ${approvalLink(workflowId)}</p>`
-      );
-    } catch (e) {
-      console.error('[ApprovalService] Re-route notification failed:', e.message);
-    }
+    // Fire-and-forget: email new contract holder without blocking the HTTP response
+    sendDirectEmail(
+      email,
+      `[SES Automator] Document Approval Required — ${workflowId}`,
+      `<p>Hi ${name},</p>
+       <p><strong>${user.name}</strong> has assigned you to approve workflow <strong>${workflowId}</strong>.</p>
+       <p>Please review the document and approve or return it at your earliest convenience.</p>
+       <p><a href="${approvalLink(workflowId)}" style="display:inline-block;padding:10px 20px;background:#1b3a6b;color:#fff;border-radius:6px;text-decoration:none">Review &amp; Approve</a></p>
+       <p style="color:#888;font-size:12px">If the button does not work, copy this link: ${approvalLink(workflowId)}</p>`
+    ).catch((e) => console.error('[ApprovalService] Re-route notification failed:', e.message));
 
     return { message: `Workflow re-routed to ${name}`, workflowId };
   } catch (err) {
@@ -478,17 +459,82 @@ async function addApprovalReply(workflowId, user, comment) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// REPLY TO VENDOR — sends an email reply in the original thread + stores it
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function replyToVendor(workflowId, user, comment) {
+  await getWorkflowOrThrow(workflowId);
+
+  const { rows: threadRows } = await pool.query(
+    `SELECT message_id, conversation_id
+     FROM thread_messages
+     WHERE workflow_id = $1 AND is_outbound = FALSE
+     ORDER BY received_at ASC LIMIT 1`,
+    [workflowId]
+  );
+
+  if (!threadRows.length) {
+    throw Object.assign(
+      new Error('No email thread found for this workflow — cannot reply'),
+      { status: 400 }
+    );
+  }
+
+  const htmlBody = comment
+    .split('\n')
+    .map((l) => {
+      const esc = l.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      return `<p>${esc || '&nbsp;'}</p>`;
+    })
+    .join('');
+
+  await sendReplyAll(threadRows[0].message_id, htmlBody, [], [], []);
+
+  const { appendThreadMessage } = require('./threadService');
+  await appendThreadMessage(workflowId, {
+    messageId:     `out-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    conversationId: threadRows[0].conversation_id,
+    senderEmail:   user.email,
+    senderName:    user.name,
+    subject:       null,
+    receivedAt:    new Date(),
+    bodyPreview:   comment.substring(0, 255),
+    bodyHtml:      htmlBody,
+    toRecipients:  null,
+    ccRecipients:  null,
+    isNew:         false,
+    isOutbound:    true,
+  });
+
+  await pool.query(
+    `INSERT INTO approval_events (workflow_id, type, user_id, comment)
+     VALUES ($1, 'comment', $2, $3)`,
+    [workflowId, user.userId, `Reply to vendor: ${comment.substring(0, 200)}`]
+  );
+
+  return { message: 'Reply sent to vendor' };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // GET THREAD RECIPIENTS — returns To (original sender) + CC for the UI
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function getThreadRecipients(workflowId) {
-  const { rows } = await pool.query(
-    `SELECT sender_email, sender_name, cc_recipients
-     FROM thread_messages WHERE workflow_id = $1 ORDER BY received_at ASC LIMIT 1`,
-    [workflowId]
-  );
+  const [{ rows }, { rows: formRows }] = await Promise.all([
+    pool.query(
+      `SELECT sender_email, sender_name, cc_recipients
+       FROM thread_messages WHERE workflow_id = $1 ORDER BY received_at ASC LIMIT 1`,
+      [workflowId]
+    ),
+    pool.query(
+      `SELECT fv.data FROM ses_forms sf
+       JOIN form_versions fv ON fv.form_id = sf.id
+       WHERE sf.workflow_id = $1 ORDER BY fv.version_number DESC LIMIT 1`,
+      [workflowId]
+    ),
+  ]);
 
-  if (!rows.length) return { toRecipients: [], ccRecipients: [] };
+  if (!rows.length) return { toRecipients: [], ccRecipients: [], defaultBody: '' };
 
   const msg = rows[0];
 
@@ -511,14 +557,19 @@ async function getThreadRecipients(workflowId) {
       .filter((r) => r.address);
   }
 
-  return { toRecipients, ccRecipients };
+  const formData = formRows[0]?.data;
+  const enteredBy = formData?.forms?.[0]?.enteredBy || formData?.enteredBy || 'Cost Engineering Team';
+  const defaultBody =
+    `Dear Team,\n\nKindly find the attached approved SES for payment processing.\n\nBest Regards,\n${enteredBy}`;
+
+  return { toRecipients, ccRecipients, defaultBody };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SEND TO VENDOR — CE manually sends approved signed PDF to vendor via email
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function sendToVendor(workflowId, user, { toRecipients, ccRecipients } = {}) {
+async function sendToVendor(workflowId, user, { toRecipients, ccRecipients, body } = {}) {
   const workflow = await getWorkflowOrThrow(workflowId);
 
   if (workflow.status !== 'approved') {
@@ -528,19 +579,23 @@ async function sendToVendor(workflowId, user, { toRecipients, ccRecipients } = {
     );
   }
 
-  const { rows: docRows } = await pool.query(
-    'SELECT * FROM ses_docs WHERE workflow_id = $1', [workflowId]
-  );
+  const [{ rows: docRows }, { rows: threadRows }, { rows: formRows }] = await Promise.all([
+    pool.query('SELECT * FROM ses_docs WHERE workflow_id = $1', [workflowId]),
+    pool.query('SELECT message_id FROM thread_messages WHERE workflow_id = $1 ORDER BY received_at ASC LIMIT 1', [workflowId]),
+    pool.query(
+      `SELECT fv.data FROM ses_forms sf
+       JOIN form_versions fv ON fv.form_id = sf.id
+       WHERE sf.workflow_id = $1
+       ORDER BY fv.version_number DESC LIMIT 1`,
+      [workflowId]
+    ),
+  ]);
+
   if (!docRows.length || !docRows[0].storage_key) {
     throw Object.assign(new Error('No signed document found'), { status: 400 });
   }
   const sesDoc = camelizeRow(docRows[0]);
 
-  const { rows: threadRows } = await pool.query(
-    `SELECT message_id FROM thread_messages
-     WHERE workflow_id = $1 ORDER BY received_at ASC LIMIT 1`,
-    [workflowId]
-  );
   if (!threadRows.length) {
     throw Object.assign(
       new Error('No email thread found for this workflow — cannot reply to vendor'),
@@ -548,33 +603,27 @@ async function sendToVendor(workflowId, user, { toRecipients, ccRecipients } = {
     );
   }
 
-  const signedBuffer = await read(sesDoc.storageKey);
+  const [signedBuffer, attRows] = await Promise.all([
+    read(sesDoc.storageKey),
+    sesDoc.attachmentId
+      ? pool.query('SELECT file_name FROM attachments WHERE id = $1', [sesDoc.attachmentId]).then((r) => r.rows)
+      : Promise.resolve([]),
+  ]);
 
-  let fileName = `SES_${workflowId}_signed.pdf`;
-  if (sesDoc.attachmentId) {
-    const { rows: attRows } = await pool.query(
-      'SELECT file_name FROM attachments WHERE id = $1', [sesDoc.attachmentId]
-    );
-    if (attRows[0]) fileName = attRows[0].file_name;
-  }
-
-  const { rows: formRows } = await pool.query(
-    `SELECT fv.data FROM ses_forms sf
-     JOIN form_versions fv ON fv.form_id = sf.id
-     WHERE sf.workflow_id = $1
-     ORDER BY fv.version_number DESC LIMIT 1`,
-    [workflowId]
-  );
+  const fileName = attRows[0]?.file_name || `SES_${workflowId}_signed.pdf`;
   const enteredBy =
     formRows[0]?.data?.forms?.[0]?.enteredBy ||
     user.name ||
     'Cost Engineer';
 
-  const replyBody = `
-    <p>Dear Team,</p>
-    <p>Kindly find the attached approved SES for payment processing.</p>
-    <p>Best Regards,<br/>${enteredBy}</p>
-  `;
+  // If the caller supplied a plain-text body, convert newlines → HTML paragraphs.
+  // Otherwise fall back to the standard template.
+  const replyBody = body
+    ? body.split('\n').map((l) => {
+        const escaped = l.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        return `<p>${escaped || '&nbsp;'}</p>`;
+      }).join('')
+    : `<p>Dear Team,</p><p>Kindly find the attached approved SES for payment processing.</p><p>Best Regards,<br/>${enteredBy}</p>`;
 
   const attachmentList = [{ name: fileName, contentType: 'application/pdf', buffer: signedBuffer }];
   // Reply to the original vendor email so the response is in the same thread.
@@ -609,6 +658,7 @@ module.exports = {
   rerouteWorkflow,
   addApprovalComment,
   reply: addApprovalReply,
+  replyToVendor,
   sendToVendor,
   getThreadRecipients,
 };
