@@ -187,11 +187,12 @@ export default function HomePage() {
     }
   };
 
-  const latestMsg    = selected ? [...selected.messages].sort(
-    (a, b) => new Date(b.receivedAt ?? 0).getTime() - new Date(a.receivedAt ?? 0).getTime()
-  )[0] : null;
+  const sortedMsgs   = selected ? [...selected.messages].sort(
+    (a, b) => new Date(a.receivedAt ?? 0).getTime() - new Date(b.receivedAt ?? 0).getTime()
+  ) : [];
+  const firstMsg      = sortedMsgs[0] ?? null;
   const isUnprocessed = selected?.status === 'received';
-  const ccList = latestMsg?.ccRecipients?.map((r) => r.emailAddress.address).join(', ');
+  const ccList = firstMsg?.ccRecipients?.map((r) => r.emailAddress.address).join(', ');
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
@@ -361,8 +362,8 @@ export default function HomePage() {
             <div className="flex flex-col h-full overflow-hidden">
               <PanelHeader
                 wfId={selected.workflowId ?? undefined}
-                title={selected.supplierName || latestMsg?.senderName || 'Unknown sender'}
-                subtitle={latestMsg?.subject ?? undefined}
+                title={selected.supplierName || firstMsg?.senderName || 'Unknown sender'}
+                subtitle={firstMsg?.subject ?? undefined}
                 onPopout={selected.workflowId ? handlePopout : undefined}
               />
 
@@ -408,16 +409,24 @@ export default function HomePage() {
                 <>
                   <PanelBody className="gap-3">
                     <PanelSection label="Email details">
-                      <MetaRow label="From"     value={latestMsg?.senderEmail} />
-                      <MetaRow label="To"       value={latestMsg?.toRecipients?.map((r) => r.emailAddress.address).join(', ')} />
+                      <MetaRow label="From"     value={firstMsg?.senderEmail} />
+                      <MetaRow label="To"       value={firstMsg?.toRecipients?.map((r) => r.emailAddress.address).join(', ')} />
                       {ccList && <MetaRow label="CC" value={ccList} />}
-                      <MetaRow label="Received" value={formatDateTime(latestMsg?.receivedAt ?? null)} />
+                      <MetaRow label="Received" value={formatDateTime(firstMsg?.receivedAt ?? null)} />
                     </PanelSection>
 
                     <PanelSection label="Body">
                       <div className="bg-ce-bg border border-ce-border rounded-lg p-2.5 text-[13px] text-ce-text leading-relaxed max-h-[100px] overflow-y-auto whitespace-pre-wrap">
-                        {latestMsg?.bodyPreview ?? '(no body preview)'}
+                        {firstMsg?.bodyPreview ?? '(no body preview)'}
                       </div>
+                      {selected.messages.length > 1 && (
+                        <button
+                          onClick={() => setActiveTab('thread')}
+                          className="mt-1.5 text-[11.5px] text-[#1b3a6b] hover:underline font-medium"
+                        >
+                          {selected.messages.length - 1} more message{selected.messages.length > 2 ? 's' : ''} — view thread →
+                        </button>
+                      )}
                     </PanelSection>
 
                     {attachments.length > 0 && (

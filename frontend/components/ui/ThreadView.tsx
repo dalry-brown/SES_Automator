@@ -1,12 +1,13 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { Send, X } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { workflowsApi } from '@/lib/api';
+import { useAuth } from '@/components/providers/AuthProvider';
 import { useToast } from '@/components/ui/Toast';
 import { formatDateTime, cn } from '@/lib/utils';
-import type { ThreadMessage } from '@/types';
+import type { ThreadMessage, WorkflowStatus } from '@/types';
 
 interface ThreadViewProps {
   messages: ThreadMessage[];
@@ -20,72 +21,69 @@ function MessageBubble({ msg, highlighted }: { msg: ThreadMessage; highlighted: 
   const initial = (msg.senderName || msg.senderEmail || '?')[0].toUpperCase();
 
   return (
-    <div
-      className={cn(
-        'rounded-xl border p-3 transition-all duration-700',
-        isOut
-          ? 'bg-[#1b3a6b]/5 border-[#1b3a6b]/20 ml-8'
-          : 'bg-white border-slate-200 mr-8',
-        highlighted && !isOut && 'ring-2 ring-blue-400 border-blue-300',
-      )}
-    >
-      {/* Header row */}
-      <div className="flex items-start justify-between gap-2 mb-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <div className={cn(
-            'w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0',
-            isOut ? 'bg-[#1b3a6b] text-white' : 'bg-slate-100 text-slate-600',
-          )}>
-            {initial}
+    <div className={cn('flex', isOut ? 'justify-end' : 'justify-start')}>
+      <div
+        className={cn(
+          'max-w-[80%] rounded-xl border p-3 transition-all duration-700',
+          isOut
+            ? 'bg-[#1b3a6b]/5 border-[#1b3a6b]/20'
+            : 'bg-white border-slate-200',
+          highlighted && !isOut && 'ring-2 ring-blue-400 border-blue-300',
+        )}
+      >
+        {/* Header row */}
+        <div className="flex items-start justify-between gap-2 mb-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className={cn(
+              'w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0',
+              isOut ? 'bg-[#1b3a6b] text-white' : 'bg-slate-100 text-slate-600',
+            )}>
+              {initial}
+            </div>
+            <div className="min-w-0">
+              <span className="text-[12px] font-semibold text-slate-700">
+                {isOut ? 'You' : (msg.senderName || msg.senderEmail || 'Unknown')}
+              </span>
+              {!isOut && msg.senderName && msg.senderEmail && (
+                <span className="text-[10.5px] text-slate-400 ml-1 hidden sm:inline truncate">
+                  &lt;{msg.senderEmail}&gt;
+                </span>
+              )}
+            </div>
           </div>
-          <div className="min-w-0">
-            <span className="text-[12px] font-semibold text-slate-700">
-              {msg.senderName || msg.senderEmail || 'Unknown'}
-            </span>
-            {msg.senderName && msg.senderEmail && (
-              <span className="text-[10.5px] text-slate-400 ml-1 hidden sm:inline truncate">
-                &lt;{msg.senderEmail}&gt;
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            {msg.isNew && (
+              <span className="text-[9.5px] font-bold text-blue-600 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded-full">
+                NEW
               </span>
             )}
-            {isOut && (
-              <span className="ml-1.5 text-[10px] font-semibold text-[#1b3a6b] bg-[#1b3a6b]/10 px-1.5 py-0.5 rounded-full">
-                You
-              </span>
-            )}
+            <span className="text-[10.5px] text-slate-400 whitespace-nowrap">
+              {formatDateTime(msg.receivedAt)}
+            </span>
           </div>
         </div>
-        <div className="flex items-center gap-1.5 flex-shrink-0">
-          {msg.isNew && (
-            <span className="text-[9.5px] font-bold text-blue-600 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded-full">
-              NEW
-            </span>
-          )}
-          <span className="text-[10.5px] text-slate-400 whitespace-nowrap">
-            {formatDateTime(msg.receivedAt)}
-          </span>
-        </div>
-      </div>
 
-      {/* Body */}
-      <div className="text-[12.5px] text-slate-600 leading-relaxed pl-8">
-        {expanded && msg.bodyHtml ? (
-          <div
-            className="prose prose-sm max-w-none text-slate-600"
-            dangerouslySetInnerHTML={{ __html: msg.bodyHtml }}
-          />
-        ) : (
-          <p className={cn(!expanded && 'line-clamp-4')}>
-            {msg.bodyPreview || '(no preview available)'}
-          </p>
-        )}
-        {(msg.bodyHtml || (msg.bodyPreview && msg.bodyPreview.length > 200)) && (
-          <button
-            onClick={() => setExpanded((p) => !p)}
-            className="text-[11px] text-[#1b3a6b] hover:underline mt-1.5 block"
-          >
-            {expanded ? 'Show less ↑' : 'Read more ↓'}
-          </button>
-        )}
+        {/* Body */}
+        <div className="text-[12.5px] text-slate-600 leading-relaxed pl-8">
+          {expanded && msg.bodyHtml ? (
+            <div
+              className="prose prose-sm max-w-none text-slate-600"
+              dangerouslySetInnerHTML={{ __html: msg.bodyHtml }}
+            />
+          ) : (
+            <p className={cn(!expanded && 'line-clamp-4')}>
+              {msg.bodyPreview || '(no preview available)'}
+            </p>
+          )}
+          {(msg.bodyHtml || (msg.bodyPreview && msg.bodyPreview.length > 200)) && (
+            <button
+              onClick={() => setExpanded((p) => !p)}
+              className="text-[11px] text-[#1b3a6b] hover:underline mt-1.5 block"
+            >
+              {expanded ? 'Show less ↑' : 'Read more ↓'}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -93,17 +91,34 @@ function MessageBubble({ msg, highlighted }: { msg: ThreadMessage; highlighted: 
 
 export function ThreadView({ messages, workflowId, canReply = false }: ThreadViewProps) {
   const qc = useQueryClient();
+  const { user } = useAuth();
   const { success, error: toastError } = useToast();
   const [replyText, setReplyText] = useState('');
   const [showReply, setShowReply] = useState(false);
+  const [localMessages, setLocalMessages] = useState<ThreadMessage[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // IDs of new (unread) messages — for the highlight ring
+  // Clear optimistic messages when server data updates (real messages arrived)
+  useEffect(() => {
+    setLocalMessages([]);
+  }, [messages]);
+
+  // Merge server + optimistic messages, sorted oldest → newest (WhatsApp style)
+  const allMessages = useMemo(() => {
+    const merged = [...messages, ...localMessages];
+    return merged.sort((a, b) => {
+      const ta = a.receivedAt ? new Date(a.receivedAt).getTime() : 0;
+      const tb = b.receivedAt ? new Date(b.receivedAt).getTime() : 0;
+      return ta - tb;
+    });
+  }, [messages, localMessages]);
+
+  // IDs of new (unread) messages — for the highlight ring, captured on mount
   const [highlightedIds] = useState<Set<string>>(
     () => new Set(messages.filter((m) => m.isNew).map((m) => m.id))
   );
 
-  // Mark read + clear highlight after 3 s
+  // Mark read on open if any new messages exist
   useEffect(() => {
     const hasNew = messages.some((m) => m.isNew);
     if (!hasNew) return;
@@ -118,14 +133,35 @@ export function ThreadView({ messages, workflowId, canReply = false }: ThreadVie
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workflowId]);
 
-  // Scroll to bottom on open
+  // Scroll to bottom whenever message count changes
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages.length]);
+  }, [allMessages.length]);
 
   const replyMutation = useMutation({
     mutationFn: (comment: string) => workflowsApi.replyToVendor(workflowId, comment),
-    onSuccess: () => {
+    onSuccess: (_data, comment) => {
+      // Show message immediately without waiting for refetch
+      const optimistic: ThreadMessage = {
+        id: `local-${Date.now()}`,
+        workflowId,
+        messageId: `out-local-${Date.now()}`,
+        conversationId: '',
+        senderEmail: user?.email ?? null,
+        senderName: user?.name ?? null,
+        subject: null,
+        bodyPreview: comment,
+        bodyHtml: null,
+        toRecipients: null,
+        ccRecipients: null,
+        receivedAt: new Date().toISOString(),
+        supplierName: null,
+        status: 'received' as WorkflowStatus,
+        statusLabel: 'Received',
+        isNew: false,
+        isOutbound: true,
+      };
+      setLocalMessages((prev) => [...prev, optimistic]);
       success('Reply sent to vendor.');
       setReplyText('');
       setShowReply(false);
@@ -143,7 +179,7 @@ export function ThreadView({ messages, workflowId, canReply = false }: ThreadVie
     replyMutation.mutate(replyText.trim());
   };
 
-  if (messages.length === 0) {
+  if (allMessages.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center flex-1 py-12 text-ce-muted">
         <p className="text-[13px]">No email messages yet</p>
@@ -153,9 +189,9 @@ export function ThreadView({ messages, workflowId, canReply = false }: ThreadVie
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      {/* Message list */}
-      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
-        {messages.map((msg) => (
+      {/* Message list — oldest at top, newest at bottom */}
+      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 bg-slate-50">
+        {allMessages.map((msg) => (
           <MessageBubble
             key={msg.id}
             msg={msg}
