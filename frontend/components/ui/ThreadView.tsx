@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { Send, X } from 'lucide-react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { workflowsApi } from '@/lib/api';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { useToast } from '@/components/ui/Toast';
@@ -10,7 +10,7 @@ import { formatDateTime, cn } from '@/lib/utils';
 import type { ThreadMessage, WorkflowStatus } from '@/types';
 
 interface ThreadViewProps {
-  messages: ThreadMessage[];
+  messages: ThreadMessage[]; // initial/fallback messages from parent
   workflowId: string;
   canReply?: boolean;
 }
@@ -31,7 +31,7 @@ function MessageBubble({ msg, highlighted }: { msg: ThreadMessage; highlighted: 
           highlighted && !isOut && 'ring-2 ring-blue-400 border-blue-300',
         )}
       >
-        {/* Header row */}
+        {/* Header */}
         <div className="flex items-start justify-between gap-2 mb-2">
           <div className="flex items-center gap-2 min-w-0">
             <div className={cn(
@@ -89,51 +89,64 @@ function MessageBubble({ msg, highlighted }: { msg: ThreadMessage; highlighted: 
   );
 }
 
-export function ThreadView({ messages, workflowId, canReply = false }: ThreadViewProps) {
-  const qc = useQueryClient();
+export function ThreadView({ messages: initialMessages, workflowId, canReply = false }: ThreadViewProps) {
+  const qc   = useQueryClient();
   const { user } = useAuth();
   const { success, error: toastError } = useToast();
-  const [replyText, setReplyText] = useState('');
-  const [showReply, setShowReply] = useState(false);
+  const [replyText, setReplyText]   = useState('');
+  const [showReply, setShowReply]   = useState(false);
   const [localMessages, setLocalMessages] = useState<ThreadMessage[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Clear optimistic messages when server data updates (real messages arrived)
-  useEffect(() => {
-    setLocalMessages([]);
-  }, [messages]);
+  // Own fetch so the thread always has fresh data (shared cache key with parent queries)
+  const { data: fetchedData } = useQuery({
+    queryKey: ['messages', workflowId],
+    queryFn:  () => workflowsApi.getMessages(workflowId),
+    // Use parent-supplied messages as instant initial data — no loading flicker
+    initialData: initialMessages.length > 0 ? { messages: initialMessages } : undefined,
+    staleTime: 0,
+  });
+  const serverMessages: ThreadMessage[] = fetchedData?.messages ?? initialMessages;
 
-  // Merge server + optimistic messages, sorted oldest → newest (WhatsApp style)
-  const allMessages = useMemo(() => {
-    const merged = [...messages, ...localMessages];
-    return merged.sort((a, b) => {
-      const ta = a.receivedAt ? new Date(a.receivedAt).getTime() : 0;
-      const tb = b.receivedAt ? new Date(b.receivedAt).getTime() : 0;
-      return ta - tb;
-    });
-  }, [messages, localMessages]);
-
-  // IDs of new (unread) messages — for the highlight ring, captured on mount
+  // IDs of new messages captured on mount — drives the highlight ring
   const [highlightedIds] = useState<Set<string>>(
-    () => new Set(messages.filter((m) => m.isNew).map((m) => m.id))
+    () => new Set(initialMessages.filter((m) => m.isNew).map((m) => m.id))
   );
 
-  // Mark read on open if any new messages exist
+  // Mark read once on open if any new messages exist
   useEffect(() => {
-    const hasNew = messages.some((m) => m.isNew);
+    const hasNew = initialMessages.some((m) => m.isNew);
     if (!hasNew) return;
     workflowsApi.markRead(workflowId)
       .then(() => {
         qc.invalidateQueries({ queryKey: ['workflows'] });
         qc.invalidateQueries({ queryKey: ['emails'] });
         qc.invalidateQueries({ queryKey: ['messages', workflowId] });
-        qc.invalidateQueries({ queryKey: ['workflow-messages', workflowId] });
       })
       .catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workflowId]);
 
-  // Scroll to bottom whenever message count changes
+  // Merge server + optimistic messages.
+  // Deduplicate: remove a local message once the same outbound content arrives from server.
+  const allMessages = useMemo(() => {
+    const serverOutboundPreviews = new Set(
+      serverMessages
+        .filter((m) => m.isOutbound)
+        .map((m) => m.bodyPreview?.trim())
+        .filter(Boolean)
+    );
+    const filteredLocal = localMessages.filter(
+      (m) => !serverOutboundPreviews.has(m.bodyPreview?.trim() ?? '')
+    );
+    return [...serverMessages, ...filteredLocal].sort((a, b) => {
+      const ta = a.receivedAt ? new Date(a.receivedAt).getTime() : 0;
+      const tb = b.receivedAt ? new Date(b.receivedAt).getTime() : 0;
+      return ta - tb;
+    });
+  }, [serverMessages, localMessages]);
+
+  // Scroll to bottom whenever message list grows
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [allMessages.length]);
@@ -141,32 +154,34 @@ export function ThreadView({ messages, workflowId, canReply = false }: ThreadVie
   const replyMutation = useMutation({
     mutationFn: (comment: string) => workflowsApi.replyToVendor(workflowId, comment),
     onSuccess: (_data, comment) => {
-      // Show message immediately without waiting for refetch
-      const optimistic: ThreadMessage = {
-        id: `local-${Date.now()}`,
-        workflowId,
-        messageId: `out-local-${Date.now()}`,
-        conversationId: '',
-        senderEmail: user?.email ?? null,
-        senderName: user?.name ?? null,
-        subject: null,
-        bodyPreview: comment,
-        bodyHtml: null,
-        toRecipients: null,
-        ccRecipients: null,
-        receivedAt: new Date().toISOString(),
-        supplierName: null,
-        status: 'received' as WorkflowStatus,
-        statusLabel: 'Received',
-        isNew: false,
-        isOutbound: true,
-      };
-      setLocalMessages((prev) => [...prev, optimistic]);
+      // Instantly show the sent message — no waiting for refetch
+      setLocalMessages((prev) => [
+        ...prev,
+        {
+          id:            `local-${Date.now()}`,
+          workflowId,
+          messageId:     `out-local-${Date.now()}`,
+          conversationId: '',
+          senderEmail:   user?.email ?? null,
+          senderName:    user?.name ?? null,
+          subject:       null,
+          bodyPreview:   comment,
+          bodyHtml:      null,
+          toRecipients:  null,
+          ccRecipients:  null,
+          receivedAt:    new Date().toISOString(),
+          supplierName:  null,
+          status:        'received' as WorkflowStatus,
+          statusLabel:   'Received',
+          isNew:         false,
+          isOutbound:    true,
+        },
+      ]);
       success('Reply sent to vendor.');
       setReplyText('');
       setShowReply(false);
+      // Refetch — real outbound message replaces the optimistic one via deduplication
       qc.invalidateQueries({ queryKey: ['messages', workflowId] });
-      qc.invalidateQueries({ queryKey: ['workflow-messages', workflowId] });
       qc.invalidateQueries({ queryKey: ['emails'] });
     },
     onError: (err: unknown) => {
