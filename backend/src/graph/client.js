@@ -8,6 +8,7 @@ const TOKEN_CACHE_FILE = path.join(__dirname, '../../.msal-cache.json');
 
 let _msalClient = null;
 let _cachedToken = null;
+let _tokenPromise = null; // lock: prevents concurrent device-code flows
 
 // File-based MSAL token cache so device code auth survives server restarts
 const cachePlugin = {
@@ -106,12 +107,18 @@ async function getToken() {
     return _cachedToken.accessToken;
   }
   if (!_msalClient) _msalClient = _buildMsalClient();
-  const result = await _acquireToken(_msalClient);
-  if (!result || !result.accessToken) {
-    throw new Error('Failed to acquire Microsoft Graph token');
-  }
-  _cachedToken = result;
-  return result.accessToken;
+
+  // Queue concurrent callers behind the first — only one device-code prompt at a time
+  if (_tokenPromise) return _tokenPromise;
+
+  _tokenPromise = (async () => {
+    const result = await _acquireToken(_msalClient);
+    if (!result || !result.accessToken) throw new Error('Failed to acquire Microsoft Graph token');
+    _cachedToken = result;
+    return result.accessToken;
+  })().finally(() => { _tokenPromise = null; });
+
+  return _tokenPromise;
 }
 
 module.exports = { getToken, GRAPH_MODE };

@@ -72,6 +72,32 @@ app.use('/api/ses-documents', sesDocumentRoutes);
 // ── Error handler ─────────────────────────────────────────────────────────────
 app.use(errorHandler);
 
+// ── Graph init (non-blocking, retries on device-code expiry) ─────────────────
+async function initGraph(attempt = 1) {
+  const notificationUrl = process.env.NOTIFICATION_URL;
+  try {
+    console.log(`[Boot] Acquiring Microsoft Graph token (attempt ${attempt})...`);
+    await getToken();
+    console.log('[Boot] Token acquired');
+
+    if (!notificationUrl) {
+      console.warn('[Boot] NOTIFICATION_URL not set — skipping webhook registration');
+    } else {
+      console.log(`[Boot] Registering webhook at ${notificationUrl}`);
+      try {
+        await registerSubscription(notificationUrl);
+      } catch (err) {
+        console.error('[Boot] Webhook registration failed (non-fatal):', err.response?.data ?? err.message);
+      }
+    }
+
+    startRenewalJob();
+  } catch (err) {
+    console.error(`[Boot] Graph init failed (retrying in 30 s): ${err.message}`);
+    setTimeout(() => initGraph(attempt + 1), 30_000);
+  }
+}
+
 // ── Startup ───────────────────────────────────────────────────────────────────
 async function start() {
   try {
@@ -89,23 +115,7 @@ async function start() {
     });
 
     if (process.env.CLIENT_ID) {
-      console.log('[Boot] Acquiring Microsoft Graph token...');
-      await getToken();
-      console.log('[Boot] Token acquired');
-
-      const notificationUrl = process.env.NOTIFICATION_URL;
-      if (!notificationUrl) {
-        console.warn('[Boot] NOTIFICATION_URL not set — skipping webhook registration');
-      } else {
-        console.log(`[Boot] Registering webhook at ${notificationUrl}`);
-        try {
-          await registerSubscription(notificationUrl);
-        } catch (err) {
-          console.error('[Boot] Webhook registration failed (server still running):', err.response?.data ?? err.message);
-        }
-      }
-
-      startRenewalJob();
+      initGraph(); // non-blocking — server stays up even if device code expires
     } else {
       console.warn('[Boot] CLIENT_ID not set — Microsoft Graph features disabled');
     }
