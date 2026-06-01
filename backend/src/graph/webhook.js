@@ -12,7 +12,7 @@ function _getResource() {
 
 async function registerSubscription(notificationUrl) {
   const token = await getToken();
-  const expirationDateTime = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const expirationDateTime = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
 
   const response = await axios.post(
     'https://graph.microsoft.com/v1.0/subscriptions',
