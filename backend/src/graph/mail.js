@@ -13,15 +13,17 @@ async function _headers() {
   return { Authorization: `Bearer ${token}` };
 }
 
+const GRAPH_TIMEOUT = 30_000; // ms — prevent indefinite hangs on Graph API calls
+
 async function fetchEmail(messageId) {
   const headers = await _headers();
-  const res = await axios.get(`${_baseUrl()}/messages/${messageId}`, { headers });
+  const res = await axios.get(`${_baseUrl()}/messages/${messageId}`, { headers, timeout: GRAPH_TIMEOUT });
   return res.data;
 }
 
 async function fetchAttachmentList(messageId) {
   const headers = await _headers();
-  const res = await axios.get(`${_baseUrl()}/messages/${messageId}/attachments`, { headers });
+  const res = await axios.get(`${_baseUrl()}/messages/${messageId}/attachments`, { headers, timeout: GRAPH_TIMEOUT });
   return res.data.value || [];
 }
 
@@ -29,7 +31,7 @@ async function downloadAttachment(messageId, attachmentId) {
   const headers = await _headers();
   const res = await axios.get(
     `${_baseUrl()}/messages/${messageId}/attachments/${attachmentId}`,
-    { headers }
+    { headers, timeout: GRAPH_TIMEOUT }
   );
   const attachment = res.data;
 
@@ -37,7 +39,7 @@ async function downloadAttachment(messageId, attachmentId) {
   if (attachment.contentBytes == null) {
     const streamRes = await axios.get(
       `${_baseUrl()}/messages/${messageId}/attachments/${attachmentId}/$value`,
-      { headers, responseType: 'arraybuffer' }
+      { headers, responseType: 'arraybuffer', timeout: GRAPH_TIMEOUT }
     );
     return {
       name: attachment.name,
@@ -82,7 +84,7 @@ async function sendReplyAll(messageId, htmlBody, attachments = [], toRecipients 
   await axios.post(
     `${_baseUrl()}/messages/${messageId}/replyAll`,
     { message },
-    { headers }
+    { headers, timeout: GRAPH_TIMEOUT }
   );
 }
 
@@ -96,7 +98,7 @@ async function sendCustomReply(messageId, htmlBody, attachments = [], toRecipien
   const { data: draft } = await axios.post(
     `${_baseUrl()}/messages/${messageId}/createReplyAll`,
     {},
-    { headers }
+    { headers, timeout: GRAPH_TIMEOUT }
   );
   const draftId = draft.id;
 
@@ -111,7 +113,7 @@ async function sendCustomReply(messageId, htmlBody, attachments = [], toRecipien
         emailAddress: { address: r.address, name: r.name || r.address },
       })),
     };
-    await axios.patch(`${_baseUrl()}/messages/${draftId}`, patch, { headers });
+    await axios.patch(`${_baseUrl()}/messages/${draftId}`, patch, { headers, timeout: GRAPH_TIMEOUT });
 
     // 3. Add attachments one-by-one (avoids large PATCH body)
     for (const { name, contentType, buffer } of attachments) {
@@ -123,12 +125,12 @@ async function sendCustomReply(messageId, htmlBody, attachments = [], toRecipien
           contentType,
           contentBytes: buffer.toString('base64'),
         },
-        { headers }
+        { headers, timeout: GRAPH_TIMEOUT }
       );
     }
 
     // 4. Send the draft
-    await axios.post(`${_baseUrl()}/messages/${draftId}/send`, {}, { headers });
+    await axios.post(`${_baseUrl()}/messages/${draftId}/send`, {}, { headers, timeout: GRAPH_TIMEOUT });
   } catch (err) {
     // Best-effort draft cleanup so it doesn't sit in Drafts
     try { await axios.delete(`${_baseUrl()}/messages/${draftId}`, { headers }); } catch {}
@@ -151,7 +153,7 @@ async function sendDirectEmail(to, subject, htmlBody, attachments = []) {
       contentBytes: buffer.toString('base64'),
     }));
   }
-  await axios.post(`${_baseUrl()}/sendMail`, { message, saveToSentItems: false }, { headers });
+  await axios.post(`${_baseUrl()}/sendMail`, { message, saveToSentItems: false }, { headers, timeout: GRAPH_TIMEOUT });
 }
 
 async function sendEmail(subject, htmlBody, attachments = [], toRecipients = [], ccRecipients = []) {
@@ -170,7 +172,7 @@ async function sendEmail(subject, htmlBody, attachments = [], toRecipients = [],
       contentBytes: buffer.toString('base64'),
     }));
   }
-  await axios.post(`${_baseUrl()}/sendMail`, { message, saveToSentItems: true }, { headers });
+  await axios.post(`${_baseUrl()}/sendMail`, { message, saveToSentItems: true }, { headers, timeout: GRAPH_TIMEOUT });
 }
 
 module.exports = { fetchEmail, fetchAttachmentList, downloadAttachment, sendReplyAll, sendCustomReply, sendDirectEmail, sendEmail };
