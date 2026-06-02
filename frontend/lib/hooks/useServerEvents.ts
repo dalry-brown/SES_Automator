@@ -29,6 +29,15 @@ export function useServerEvents() {
       } catch (_) {}
     });
 
+    es.addEventListener('workflow.updated', (e: MessageEvent) => {
+      try {
+        const { workflowId } = JSON.parse(e.data) as { workflowId: string };
+        qc.invalidateQueries({ queryKey: ['workflows'] });
+        qc.invalidateQueries({ queryKey: ['workflow', workflowId] });
+        qc.invalidateQueries({ queryKey: ['approval', workflowId] });
+      } catch (_) {}
+    });
+
     return () => es.close();
   }, [qc]);
 }

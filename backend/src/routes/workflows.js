@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const authenticate = require('../middleware/authenticate');
 const { requireRole } = require('../middleware/rbac');
+const { emit } = require('../services/sseService');
 
 // GET /api/workflows — list workflows (filtered by role)
 router.get('/', authenticate, async (req, res, next) => {
@@ -42,6 +43,7 @@ router.patch('/:id/status', [authenticate, requireRole('editor')], async (req, r
   try {
     const { updateWorkflowStatus } = require('../db/queries/workflows');
     const workflow = await updateWorkflowStatus(req.params.id, req.body.status);
+    emit('workflow.updated', { workflowId: req.params.id });
     res.json({ workflow });
   } catch (err) {
     next(err);
@@ -75,6 +77,7 @@ router.post('/:id/mark-sent', [authenticate, requireRole('editor')], async (req,
   try {
     const { updateWorkflowStatus } = require('../db/queries/workflows');
     const workflow = await updateWorkflowStatus(req.params.id, 'sent');
+    emit('workflow.updated', { workflowId: req.params.id });
     res.json({ workflow });
   } catch (err) {
     next(err);
@@ -86,6 +89,7 @@ router.post('/:id/close', authenticate, async (req, res, next) => {
   try {
     const { updateWorkflowStatus } = require('../db/queries/workflows');
     const workflow = await updateWorkflowStatus(req.params.id, 'closed');
+    emit('workflow.updated', { workflowId: req.params.id });
     res.json({ workflow });
   } catch (err) {
     next(err);

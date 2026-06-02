@@ -12,6 +12,7 @@ const {
   getAutofillData,
 } = require('../db/queries/ses');
 const { sendDirectEmail } = require('../graph/mail');
+const { emit } = require('./sseService');
 
 const FRONTEND_URL  = process.env.FRONTEND_URL  || 'http://localhost:3000';
 
@@ -208,6 +209,8 @@ async function submitSES(formId, user) {
   } finally {
     client.release();
   }
+
+  emit('workflow.updated', { workflowId: form.workflowId });
 
   // Notify contract holder
   if (chEmail) {

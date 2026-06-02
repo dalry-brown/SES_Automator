@@ -1,5 +1,6 @@
 const pool = require('../db/pool');
 const { camelizeRow } = require('../db/camelize');
+const { emit } = require('./sseService');
 
 async function generateWfId(date = new Date()) {
   const d = date instanceof Date ? date : new Date(date);
@@ -33,6 +34,8 @@ async function convertOtherToWorkflow(otherId) {
     'DELETE FROM manual_items WHERE id = $1',
     [otherId]
   );
+
+  emit('workflow.updated', { workflowId: item.workflowId });
 
   return { workflowId: item.workflowId };
 }

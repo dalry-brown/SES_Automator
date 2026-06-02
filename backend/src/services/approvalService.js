@@ -7,6 +7,7 @@ const { camelizeRow, camelize } = require('../db/camelize');
 const { read, save } = require('./storageService');
 const { insertAttachment } = require('../db/queries/attachments');
 const { sendReplyAll, sendCustomReply, sendDirectEmail, sendEmail } = require('../graph/mail');
+const { emit } = require('./sseService');
 
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
@@ -244,6 +245,8 @@ async function signWorkflow(workflowId, user, body) {
     client.release();
   }
 
+  emit('workflow.updated', { workflowId });
+
   // Fire-and-forget: notify CE without blocking the HTTP response
   getSubmitterEmail(workflowId).then((submitter) => {
     if (!submitter) return;
@@ -293,6 +296,7 @@ async function queryWorkflow(workflowId, user, comment) {
     );
     await client.query('COMMIT');
 
+    emit('workflow.updated', { workflowId });
     return camelizeRow(rows[0]);
   } catch (err) {
     await client.query('ROLLBACK');
@@ -334,6 +338,8 @@ async function returnWorkflow(workflowId, user, comment) {
       [workflowId, user.userId, comment]
     );
     await client.query('COMMIT');
+
+    emit('workflow.updated', { workflowId });
 
     // Fire-and-forget: notify CE submitter without blocking the HTTP response
     getSubmitterEmail(workflowId).then((submitter) => {
@@ -408,6 +414,8 @@ async function rerouteWorkflow(workflowId, user, { email, name }) {
     );
 
     await client.query('COMMIT');
+
+    emit('workflow.updated', { workflowId });
 
     // Fire-and-forget: email new contract holder without blocking the HTTP response
     sendDirectEmail(
@@ -512,7 +520,6 @@ async function replyToVendor(workflowId, user, comment) {
     [workflowId, user.userId, `Reply to vendor: ${comment.substring(0, 200)}`]
   );
 
-  const { emit } = require('./sseService');
   emit('reply.sent', { workflowId });
 
   return { message: 'Reply sent to vendor' };
@@ -649,6 +656,8 @@ async function sendToVendor(workflowId, user, { toRecipients, ccRecipients, body
      VALUES ($1, 'comment', $2, 'Document sent to vendor')`,
     [workflowId, user.userId]
   );
+
+  emit('workflow.updated', { workflowId });
 
   return { message: 'Document sent to vendor', workflowId };
 }
