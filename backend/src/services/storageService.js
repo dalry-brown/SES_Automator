@@ -49,12 +49,17 @@ async function remove(storageKey) {
   if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
 }
 
-async function serveAttachment(attachmentId, res) {
+async function serveAttachment(attachmentId, res, { download = false } = {}) {
   const attachment = await getAttachment(attachmentId);
   if (!attachment) {
     res.status(404).json({ error: 'Attachment not found' });
     return;
   }
+
+  const disposition = download ? 'attachment' : 'inline';
+  const asciiFallback = attachment.fileName.replace(/[^\x20-\x7E]/g, '_');
+  const encoded = encodeURIComponent(attachment.fileName);
+  const contentDisposition = `${disposition}; filename="${asciiFallback}"; filename*=UTF-8''${encoded}`;
 
   if (STORAGE_MODE === 'azure') {
     const blobClient = _containerClient().getBlockBlobClient(attachment.storageKey);
@@ -63,18 +68,16 @@ async function serveAttachment(attachmentId, res) {
         permissions: BlobSASPermissions.parse('r'),
         expiresOn: new Date(Date.now() + 3_600_000),
         contentType: attachment.mimeType || 'application/octet-stream',
-        contentDisposition: `inline; filename="${attachment.fileName.replace(/[^\x20-\x7E]/g, '_')}"`,
+        contentDisposition,
       });
       res.redirect(302, sasUrl);
     } catch (err) {
       // generateSasUrl requires account key auth; fall back to streaming if using SAS conn string
       console.warn('[Storage] SAS generation failed, falling back to stream:', err.message);
-      const download = await blobClient.download(0);
-      const asciiFallback = attachment.fileName.replace(/[^\x20-\x7E]/g, '_');
-      const encoded = encodeURIComponent(attachment.fileName);
+      const dl = await blobClient.download(0);
       res.setHeader('Content-Type', attachment.mimeType || 'application/octet-stream');
-      res.setHeader('Content-Disposition', `inline; filename="${asciiFallback}"; filename*=UTF-8''${encoded}`);
-      download.readableStreamBody.pipe(res);
+      res.setHeader('Content-Disposition', contentDisposition);
+      dl.readableStreamBody.pipe(res);
     }
     return;
   }
@@ -86,19 +89,14 @@ async function serveAttachment(attachmentId, res) {
   }
 
   const stat = fs.statSync(filePath);
-  const asciiFallback = attachment.fileName.replace(/[^\x20-\x7E]/g, '_');
-  const encoded = encodeURIComponent(attachment.fileName);
   res.setHeader('Content-Type', attachment.mimeType || 'application/octet-stream');
-  res.setHeader('Content-Disposition', `inline; filename="${asciiFallback}"; filename*=UTF-8''${encoded}`);
+  res.setHeader('Content-Disposition', contentDisposition);
   res.setHeader('Content-Length', stat.size);
 
   const stream = fs.createReadStream(filePath);
   stream.on('error', (err) => {
-    if (!res.headersSent) {
-      res.status(500).json({ error: 'Failed to read file' });
-    } else {
-      res.destroy(err);
-    }
+    if (!res.headersSent) res.status(500).json({ error: 'Failed to read file' });
+    else res.destroy(err);
   });
   stream.pipe(res);
 }

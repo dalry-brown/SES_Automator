@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { X, ChevronLeft, Download } from 'lucide-react';
 import { getStoredToken } from '@/lib/auth';
 import { cn } from '@/lib/utils';
@@ -27,66 +27,32 @@ function isPreviewable(mimeType: string | null | undefined): boolean {
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
-function triggerDownload(blobUrl: string, fileName: string) {
-  const a = document.createElement('a');
-  a.href = blobUrl;
-  a.download = fileName;
-  a.click();
+// Builds a URL the browser can load directly — token in query param so it
+// works in iframe src (which cannot send Authorization headers).
+// ?dl=1 sets Content-Disposition: attachment to force a download.
+function getAttachmentUrl(attachmentId: string, download = false): string {
+  const token = getStoredToken();
+  const params = new URLSearchParams();
+  if (token) params.set('token', token);
+  if (download) params.set('dl', '1');
+  return `${API}/api/attachments/${attachmentId}?${params.toString()}`;
 }
 
-export function useAttachmentBlob(attachmentId: string | undefined) {
-  const [blobUrl, setBlobUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError]     = useState(false);
-
-  useEffect(() => {
-    if (!attachmentId) { setBlobUrl(null); return; }
-    let revoked = false;
-    let url: string | null = null;
-
-    setLoading(true);
-    setError(false);
-
-    const token = getStoredToken();
-    fetch(`${API}/api/attachments/${attachmentId}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    })
-      .then((r) => {
-        if (!r.ok) throw new Error('Failed');
-        return r.blob();
-      })
-      .then((blob) => {
-        if (revoked) return;
-        url = URL.createObjectURL(blob);
-        setBlobUrl(url);
-        setLoading(false);
-      })
-      .catch(() => {
-        if (!revoked) { setError(true); setLoading(false); }
-      });
-
-    return () => {
-      revoked = true;
-      if (url) URL.revokeObjectURL(url);
-      setBlobUrl(null);
-    };
-  }, [attachmentId]);
-
-  return { blobUrl, loading, error };
-}
-
-/* ── Sidebar-embedded viewer ────────────────────────────────────────────────
-   Fills all available height within the sidebar. Shown instead of the
-   email detail body when an attachment chip is clicked.
-────────────────────────────────────────────────────────────────────────── */
+/* ── Sidebar-embedded viewer ─────────────────────────────────────────────────
+   Fills all available height. Shown instead of the email detail body when
+   an attachment chip is clicked.
+────────────────────────────────────────────────────────────────────────────── */
 interface SidebarViewProps {
   attachment: Attachment;
   onClose: () => void;
 }
 
 export function AttachmentSidebarView({ attachment, onClose }: SidebarViewProps) {
-  const { blobUrl, loading, error } = useAttachmentBlob(attachment.id);
+  const [loaded, setLoaded] = useState(false);
+  const [errored, setErrored] = useState(false);
   const canPreview = isPreviewable(attachment.mimeType);
+  const previewUrl = getAttachmentUrl(attachment.id);
+  const downloadUrl = getAttachmentUrl(attachment.id, true);
 
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
@@ -101,15 +67,13 @@ export function AttachmentSidebarView({ attachment, onClose }: SidebarViewProps)
         <span className="flex-1 text-[12px] font-medium text-ce-text truncate text-center">
           {attachment.fileName}
         </span>
-        {blobUrl && (
-          <button
-            onClick={() => triggerDownload(blobUrl, attachment.fileName)}
-            className="flex-shrink-0 text-ce-hint hover:text-ce-navy transition-colors"
-            title="Download"
-          >
-            <Download size={13} />
-          </button>
-        )}
+        <a
+          href={downloadUrl}
+          className="flex-shrink-0 text-ce-hint hover:text-ce-navy transition-colors"
+          title="Download"
+        >
+          <Download size={13} />
+        </a>
         <button
           onClick={onClose}
           className="flex-shrink-0 text-ce-hint hover:text-ce-navy transition-colors"
@@ -119,36 +83,37 @@ export function AttachmentSidebarView({ attachment, onClose }: SidebarViewProps)
         </button>
       </div>
 
-      {/* Preview area — fills remaining sidebar height */}
+      {/* Preview area */}
       <div className="flex-1 relative bg-ce-bg min-h-0">
-        {loading && (
-          <div className="absolute inset-0 flex items-center justify-center text-[12px] text-ce-muted">
+        {!loaded && !errored && canPreview && (
+          <div className="absolute inset-0 flex items-center justify-center text-[12px] text-ce-muted pointer-events-none">
             Loading…
           </div>
         )}
-        {error && (
+        {errored && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-[12px] text-red-500 px-4 text-center">
             Could not load file.
             <span className="text-ce-muted">The file may not be accessible.</span>
           </div>
         )}
-        {blobUrl && canPreview && (
+        {canPreview ? (
           <iframe
-            src={blobUrl}
+            src={previewUrl}
             className="w-full h-full border-0"
             title={attachment.fileName}
+            onLoad={() => setLoaded(true)}
+            onError={() => setErrored(true)}
           />
-        )}
-        {blobUrl && !canPreview && (
+        ) : (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-4">
             <div className="text-[13px] font-medium text-ce-text">{attachment.fileName}</div>
             <div className="text-[12px] text-ce-muted">This file type cannot be previewed in the browser.</div>
-            <button
-              onClick={() => triggerDownload(blobUrl, attachment.fileName)}
+            <a
+              href={downloadUrl}
               className="flex items-center gap-2 bg-ce-navy text-white text-[13px] font-medium px-4 py-2 rounded-lg hover:bg-ce-navy2 transition-colors"
             >
               <Download size={14} /> Download file
-            </button>
+            </a>
           </div>
         )}
       </div>
@@ -156,52 +121,56 @@ export function AttachmentSidebarView({ attachment, onClose }: SidebarViewProps)
   );
 }
 
-/* ── Standalone preview (used in pop-out preview page) ───────────────────── */
+/* ── Standalone viewer (pop-out preview page) ────────────────────────────── */
 interface StandaloneProps {
   attachment: Attachment;
   className?: string;
 }
 
 export function AttachmentViewer({ attachment, className }: StandaloneProps) {
-  const { blobUrl, loading, error } = useAttachmentBlob(attachment.id);
+  const [loaded, setLoaded] = useState(false);
+  const [errored, setErrored] = useState(false);
   const canPreview = isPreviewable(attachment.mimeType);
+  const previewUrl = getAttachmentUrl(attachment.id);
+  const downloadUrl = getAttachmentUrl(attachment.id, true);
 
   return (
     <div className={cn('flex-1 relative bg-ce-bg min-h-0', className)}>
-      {loading && (
-        <div className="absolute inset-0 flex items-center justify-center text-[13px] text-ce-muted">
+      {!loaded && !errored && canPreview && (
+        <div className="absolute inset-0 flex items-center justify-center text-[13px] text-ce-muted pointer-events-none">
           Loading…
         </div>
       )}
-      {error && (
+      {errored && (
         <div className="absolute inset-0 flex items-center justify-center text-[13px] text-red-500">
           Could not load file
         </div>
       )}
-      {blobUrl && canPreview && (
+      {canPreview ? (
         <iframe
-          src={blobUrl}
+          src={previewUrl}
           className="w-full h-full border-0"
           title={attachment.fileName}
+          onLoad={() => setLoaded(true)}
+          onError={() => setErrored(true)}
         />
-      )}
-      {blobUrl && !canPreview && (
+      ) : (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6">
           <div className="text-[14px] font-medium text-ce-text">{attachment.fileName}</div>
           <div className="text-[13px] text-ce-muted">This file type cannot be previewed in the browser.</div>
-          <button
-            onClick={() => triggerDownload(blobUrl, attachment.fileName)}
+          <a
+            href={downloadUrl}
             className="flex items-center gap-2 bg-ce-navy text-white text-[13px] font-medium px-4 py-2 rounded-lg hover:bg-ce-navy2 transition-colors"
           >
             <Download size={14} /> Download file
-          </button>
+          </a>
         </div>
       )}
     </div>
   );
 }
 
-/* ── Attachment list chip ───────────────────────────────────────────────── */
+/* ── Attachment list chip ────────────────────────────────────────────────── */
 interface ChipProps {
   att: Attachment;
   selected?: boolean;
