@@ -26,6 +26,7 @@ const trackerRoutes = require('./routes/tracker');
 const othersRoutes = require('./routes/others');
 const suggestionRoutes = require('./routes/suggestions');
 const sesDocumentRoutes = require('./routes/sesDocuments');
+const eventsRoutes = require('./routes/events');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -68,6 +69,7 @@ app.use('/api/tracker', trackerRoutes);
 app.use('/api/others', othersRoutes);
 app.use('/api/suggestions', suggestionRoutes);
 app.use('/api/ses-documents', sesDocumentRoutes);
+app.use('/api/events', eventsRoutes);
 
 // ── Error handler ─────────────────────────────────────────────────────────────
 app.use(errorHandler);

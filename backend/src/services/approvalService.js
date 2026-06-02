@@ -512,6 +512,9 @@ async function replyToVendor(workflowId, user, comment) {
     [workflowId, user.userId, `Reply to vendor: ${comment.substring(0, 200)}`]
   );
 
+  const { emit } = require('./sseService');
+  emit('reply.sent', { workflowId });
+
   return { message: 'Reply sent to vendor' };
 }
 

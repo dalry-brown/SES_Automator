@@ -3,6 +3,7 @@ const { save } = require('./storageService');
 const { insertAttachment } = require('../db/queries/attachments');
 const { findWorkflowByConversationId, appendThreadMessage } = require('./threadService');
 const { generateWfId } = require('./workflowService');
+const { emit } = require('./sseService');
 const pool = require('../db/pool');
 
 async function ingestEmail(messageId) {
@@ -103,6 +104,9 @@ async function ingestEmail(messageId) {
 
     console.log(`[EmailService] Saved attachment "${name}" for workflow ${workflowId}`);
   }
+
+  // Push real-time update to all connected browser clients
+  emit('email.new', { workflowId, isNewThread: !existingWf });
 
   return workflowId;
 }

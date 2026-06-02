@@ -5,10 +5,12 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { AppTopbar } from '@/components/layout/AppTopbar';
 import { Spinner } from '@/components/ui/Spinner';
+import { useServerEvents } from '@/lib/hooks/useServerEvents';
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth();
   const router = useRouter();
+  useServerEvents();
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) router.replace('/login');
