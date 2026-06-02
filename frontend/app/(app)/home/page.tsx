@@ -100,7 +100,7 @@ export default function HomePage() {
   const wfs    = wfData ?? [];
   const emails = emailsData?.emails ?? [];
 
-  const reviewCount   = emails.filter((e) => e.status === 'received').length;
+  const reviewCount   = new Set(emails.filter((e) => e.status === 'received').map((e) => e.workflowId)).size;
   const approvalCount = wfs.filter((w) => w.status === 'pending_approval').length;
   const approvedCount = wfs.filter((w) => w.status === 'approved').length;
   const sentCount     = wfs.filter((w) => w.status === 'sent' || w.status === 'closed').length;
