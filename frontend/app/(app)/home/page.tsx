@@ -273,6 +273,9 @@ export default function HomePage() {
                     const isDraft = !!wf?.hasDraft && wf.status === 'received';
                     const draftEditor = isDraft ? formatDraftEditor(wf?.draftEditorName ?? null) : null;
                     const msgCount = group.messages.length;
+                    const displayMsg = [...group.messages].sort(
+                      (a, b) => new Date(a.receivedAt ?? 0).getTime() - new Date(b.receivedAt ?? 0).getTime()
+                    )[0];
 
                     return (
                       <div
@@ -336,7 +339,7 @@ export default function HomePage() {
                             )}
                           </div>
                           <div className="text-[12px] text-ce-muted truncate">
-                            {group.messages[0]?.subject || '(no subject)'}
+                            {displayMsg?.subject || '(no subject)'}
                           </div>
                         </div>
 
