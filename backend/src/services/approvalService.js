@@ -496,7 +496,8 @@ async function replyToVendor(workflowId, user, comment) {
     })
     .join('');
 
-  await sendReplyAll(threadRows[0].message_id, htmlBody, [], [], []);
+  // createReplyAll auto-populates all original TO/CC recipients — no need to override them
+  await sendCustomReply(threadRows[0].message_id, htmlBody);
 
   const { appendThreadMessage } = require('./threadService');
   await appendThreadMessage(workflowId, {

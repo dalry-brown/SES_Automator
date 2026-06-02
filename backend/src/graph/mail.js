@@ -88,8 +88,9 @@ async function sendReplyAll(messageId, htmlBody, attachments = [], toRecipients 
   );
 }
 
-// sendCustomReply — reply-all with editable To/CC recipients.
-// Uses createReplyAll (preserves thread) → PATCH (override recipients/body) → send.
+// sendCustomReply — reply-all that preserves thread.
+// Uses createReplyAll (inherits all original recipients) → PATCH body (+ optional recipient override) → send.
+// If toRecipients/ccRecipients are omitted the draft keeps the Graph-computed reply-all recipients.
 // Attachments are added via separate POST calls so large files don't hit the PATCH body limit.
 async function sendCustomReply(messageId, htmlBody, attachments = [], toRecipients, ccRecipients) {
   const headers = await _headers();
@@ -103,16 +104,18 @@ async function sendCustomReply(messageId, htmlBody, attachments = [], toRecipien
   const draftId = draft.id;
 
   try {
-    // 2. Patch the draft: override body and recipient lists
-    const patch = {
-      body: { contentType: 'html', content: htmlBody },
-      toRecipients: toRecipients.map((r) => ({
+    // 2. Patch the draft: always update body; only override recipients when explicitly provided
+    const patch = { body: { contentType: 'html', content: htmlBody } };
+    if (toRecipients != null) {
+      patch.toRecipients = toRecipients.map((r) => ({
         emailAddress: { address: r.address, name: r.name || r.address },
-      })),
-      ccRecipients: ccRecipients.map((r) => ({
+      }));
+    }
+    if (ccRecipients != null) {
+      patch.ccRecipients = ccRecipients.map((r) => ({
         emailAddress: { address: r.address, name: r.name || r.address },
-      })),
-    };
+      }));
+    }
     await axios.patch(`${_baseUrl()}/messages/${draftId}`, patch, { headers, timeout: GRAPH_TIMEOUT });
 
     // 3. Add attachments one-by-one (avoids large PATCH body)

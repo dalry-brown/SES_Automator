@@ -10,22 +10,59 @@ function _getResource() {
   return 'me/mailFolders/inbox/messages';
 }
 
+// Idempotent: checks for an existing valid subscription before creating a new one.
+// This prevents duplicate subscriptions across restarts and initGraph retries.
 async function registerSubscription(notificationUrl) {
   const token = await getToken();
-  const expirationDateTime = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+  const headers = { Authorization: `Bearer ${token}` };
+  const resource = _getResource();
 
+  // List existing subscriptions and reuse one if it matches this resource + notificationUrl
+  const { data: existing } = await axios.get(
+    'https://graph.microsoft.com/v1.0/subscriptions',
+    { headers }
+  );
+
+  const match = (existing.value || []).find(
+    (s) => s.resource === resource && s.notificationUrl === notificationUrl
+  );
+
+  if (match) {
+    // Renew the existing subscription (extend its expiry) and reuse it
+    const expirationDateTime = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+    try {
+      await axios.patch(
+        `https://graph.microsoft.com/v1.0/subscriptions/${match.id}`,
+        { expirationDateTime },
+        { headers }
+      );
+      _subscriptionId = match.id;
+      console.log(`[Webhook] Reusing existing subscription (renewed): ${_subscriptionId}`);
+    } catch (err) {
+      // Existing subscription may be expired/invalid — delete and recreate
+      console.warn(`[Webhook] Could not renew existing subscription (${match.id}): ${err.message} — recreating`);
+      try { await axios.delete(`https://graph.microsoft.com/v1.0/subscriptions/${match.id}`, { headers }); } catch {}
+      return _createSubscription(notificationUrl, headers, resource);
+    }
+    return _subscriptionId;
+  }
+
+  return _createSubscription(notificationUrl, headers, resource);
+}
+
+async function _createSubscription(notificationUrl, headers, resource) {
+  const expirationDateTime = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
   const response = await axios.post(
     'https://graph.microsoft.com/v1.0/subscriptions',
     {
       changeType: 'created',
       notificationUrl,
-      resource: _getResource(),
+      resource,
       expirationDateTime,
       clientState: process.env.WEBHOOK_CLIENT_STATE || 'invoice-automation-prod',
     },
-    { headers: { Authorization: `Bearer ${token}` } }
+    { headers }
   );
-
   _subscriptionId = response.data.id;
   console.log(`[Webhook] Subscription registered: ${_subscriptionId}`);
   return _subscriptionId;

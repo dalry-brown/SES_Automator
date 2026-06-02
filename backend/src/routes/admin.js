@@ -38,18 +38,36 @@ router.delete('/users/:id', guard, async (req, res, next) => {
   }
 });
 
-// POST /api/admin/webhook/register — re-register Graph subscription using live token
+// GET /api/admin/webhook/status — show active subscriptions from Graph API
+router.get('/webhook/status', guard, async (req, res, next) => {
+  try {
+    const axios = require('axios');
+    const { getToken } = require('../graph/client');
+    const { getSubscriptionId } = require('../graph/webhook');
+    const token = await getToken();
+    const { data } = await axios.get('https://graph.microsoft.com/v1.0/subscriptions', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    res.json({
+      activeInMemoryId: getSubscriptionId(),
+      subscriptions: data.value || [],
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.response?.data ?? err.message });
+  }
+});
+
+// POST /api/admin/webhook/register — force re-register (or reuse existing) Graph subscription
 // Body: { notificationUrl?: string } — falls back to NOTIFICATION_URL env var
 router.post('/webhook/register', guard, async (req, res, next) => {
   try {
     const { registerSubscription } = require('../graph/webhook');
     const notificationUrl = req.body?.notificationUrl || process.env.NOTIFICATION_URL;
     if (!notificationUrl) return res.status(400).json({ error: 'NOTIFICATION_URL not set' });
-    const result = await registerSubscription(notificationUrl);
-    res.json({ ok: true, subscription: result });
+    const subscriptionId = await registerSubscription(notificationUrl);
+    res.json({ ok: true, subscriptionId });
   } catch (err) {
-    const data = err.response?.data;
-    res.status(500).json({ error: data ?? err.message });
+    res.status(500).json({ error: err.response?.data ?? err.message });
   }
 });
 
