@@ -55,35 +55,14 @@ async function downloadAttachment(messageId, attachmentId) {
   };
 }
 
-async function sendReplyAll(messageId, htmlBody, attachments = [], toRecipients = [], ccRecipients = []) {
+// sendReplyAll — sends a reply-all to all original thread recipients.
+// Requires only Mail.Send (not Mail.ReadWrite). Graph auto-populates TO/CC from the thread.
+// 'comment' supports HTML content per Graph API spec.
+async function sendReplyAll(messageId, htmlBody) {
   const headers = await _headers();
-
-  const message = {
-    body: { contentType: 'html', content: htmlBody },
-  };
-
-  if (toRecipients.length > 0) {
-    message.toRecipients = toRecipients.map((r) => ({
-      emailAddress: { address: r.address, name: r.name || r.address },
-    }));
-  }
-  if (ccRecipients.length > 0) {
-    message.ccRecipients = ccRecipients.map((r) => ({
-      emailAddress: { address: r.address, name: r.name || r.address },
-    }));
-  }
-  if (attachments.length > 0) {
-    message.attachments = attachments.map(({ name, contentType, buffer }) => ({
-      '@odata.type': '#microsoft.graph.fileAttachment',
-      name,
-      contentType,
-      contentBytes: buffer.toString('base64'),
-    }));
-  }
-
   await axios.post(
     `${_baseUrl()}/messages/${messageId}/replyAll`,
-    { message },
+    { comment: htmlBody },
     { headers, timeout: GRAPH_TIMEOUT }
   );
 }

@@ -496,8 +496,8 @@ async function replyToVendor(workflowId, user, comment) {
     })
     .join('');
 
-  // createReplyAll auto-populates all original TO/CC recipients — no need to override them
-  await sendCustomReply(threadRows[0].message_id, htmlBody);
+  // replyAll action needs only Mail.Send; Graph auto-populates all original TO/CC recipients
+  await sendReplyAll(threadRows[0].message_id, htmlBody);
 
   const { appendThreadMessage } = require('./threadService');
   await appendThreadMessage(workflowId, {
