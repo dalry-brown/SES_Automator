@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { useWorkflows } from '@/lib/hooks/useWorkflows';
 import { useQuery } from '@tanstack/react-query';
-import { emailsApi, othersApi } from '@/lib/api';
+import { othersApi } from '@/lib/api';
 
 export function AppTopbar() {
   const pathname = usePathname();
@@ -18,14 +18,12 @@ export function AppTopbar() {
 
   // Data for badge counts — react-query caches so no extra fetches
   const { data: wfData }    = useWorkflows();
-  const { data: emailsData } = useQuery({ queryKey: ['emails'], queryFn: () => emailsApi.list(), refetchInterval: 60_000 });
   const { data: othersData } = useQuery({ queryKey: ['others'], queryFn: () => othersApi.list() });
 
   const wfs    = wfData ?? [];
-  const emails = emailsData?.emails ?? [];
   const others = othersData?.items ?? [];
 
-  const reviewCount   = emails.filter((e) => e.status === 'received').length;
+  const reviewCount   = wfs.filter((w) => w.status === 'received').length;
   const approvalCount = wfs.filter((w) => w.status === 'pending_approval').length;
   const approvedCount = wfs.filter((w) => w.status === 'approved').length;
   const othersOpen    = others.filter((o) => o.status === 'open').length;

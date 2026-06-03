@@ -9,8 +9,6 @@ import {
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { useWorkflows } from '@/lib/hooks/useWorkflows';
-import { useQuery } from '@tanstack/react-query';
-import { emailsApi } from '@/lib/api';
 
 interface NavItem {
   label: string;
@@ -41,19 +39,12 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const pathname    = usePathname();
   const { effectiveRole } = useAuth();
 
-  const { data: wfData }     = useWorkflows();
-  const { data: emailsData } = useQuery({
-    queryKey: ['emails'],
-    queryFn:  () => emailsApi.list(),
-    refetchInterval: 60_000,
-    staleTime: 30_000,
-  });
+  const { data: wfData } = useWorkflows();
 
-  const wfs    = wfData ?? [];
-  const emails = emailsData?.emails ?? [];
+  const wfs = wfData ?? [];
 
   const counts: Record<string, number> = {
-    pendingReview:   emails.filter((e) => e.status === 'received').length,
+    pendingReview:   wfs.filter((w) => w.status === 'received').length,
     pendingApproval: wfs.filter((w) => w.status === 'pending_approval' || w.status === 'queried').length,
     approved:        wfs.filter((w) => w.status === 'approved').length,
   };
