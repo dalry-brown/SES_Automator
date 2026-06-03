@@ -55,14 +55,49 @@ async function downloadAttachment(messageId, attachmentId) {
   };
 }
 
-// sendReplyAll — sends a reply-all to all original thread recipients.
-// Requires only Mail.Send (not Mail.ReadWrite). Graph auto-populates TO/CC from the thread.
-// 'comment' supports HTML content per Graph API spec.
+// sendReplyAll — reply-all for personal Outlook accounts.
+// The replyAll/createReplyAll Graph actions are Exchange Online only and return
+// ErrorAccessDenied for personal MSA accounts. We simulate reply-all via sendMail:
+// fetch the original message for recipients + SMTP message-ID, then send with
+// In-Reply-To so the vendor's client threads the reply correctly.
 async function sendReplyAll(messageId, htmlBody) {
   const headers = await _headers();
+
+  // Fetch original message: recipients + SMTP ID for threading header
+  const { data: orig } = await axios.get(
+    `${_baseUrl()}/messages/${messageId}?$select=from,toRecipients,ccRecipients,subject,internetMessageId`,
+    { headers, timeout: GRAPH_TIMEOUT }
+  );
+
+  // Reply-all: vendor (original FROM) goes to TO; everyone else (original TO + CC) goes to CC
+  const toList  = [orig.from].filter(Boolean);
+  const ccList  = [
+    ...(orig.toRecipients || []),
+    ...(orig.ccRecipients || []),
+  ];
+
+  const subject = (orig.subject || '').match(/^re:/i)
+    ? (orig.subject || '')
+    : `Re: ${orig.subject || ''}`;
+
+  const message = {
+    subject,
+    body: { contentType: 'html', content: htmlBody },
+    toRecipients: toList,
+    ccRecipients: ccList,
+  };
+
+  // Threading headers so the reply chains in the vendor's email client
+  if (orig.internetMessageId) {
+    message.internetMessageHeaders = [
+      { name: 'In-Reply-To', value: orig.internetMessageId },
+      { name: 'References',  value: orig.internetMessageId },
+    ];
+  }
+
   await axios.post(
-    `${_baseUrl()}/messages/${messageId}/replyAll`,
-    { comment: htmlBody },
+    `${_baseUrl()}/sendMail`,
+    { message, saveToSentItems: true },
     { headers, timeout: GRAPH_TIMEOUT }
   );
 }
