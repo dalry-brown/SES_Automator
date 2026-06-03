@@ -7,7 +7,25 @@ async function listWorkflows(user) {
   const where  = isUser ? 'WHERE w.contract_holder_email = $1' : '';
 
   const { rows } = await pool.query(
-    `SELECT
+    `WITH first_inbound AS (
+       SELECT DISTINCT ON (workflow_id)
+         workflow_id, subject, sender_name, sender_email
+       FROM thread_messages
+       WHERE is_outbound = FALSE
+       ORDER BY workflow_id, received_at ASC
+     ),
+     last_activity AS (
+       SELECT DISTINCT ON (workflow_id)
+         workflow_id, received_at AS last_received_at
+       FROM thread_messages
+       ORDER BY workflow_id, received_at DESC
+     ),
+     msg_counts AS (
+       SELECT workflow_id, COUNT(*)::int AS message_count
+       FROM thread_messages
+       GROUP BY workflow_id
+     )
+     SELECT
        w.*,
        s.label AS status_label,
        lock_user.name  AS locked_by_name,
@@ -18,7 +36,12 @@ async function listWorkflows(user) {
        EXISTS (
          SELECT 1 FROM thread_messages tm
          WHERE tm.workflow_id = w.id AND tm.is_new = TRUE
-       ) AS has_new_message
+       ) AS has_new_message,
+       fi.subject      AS first_subject,
+       fi.sender_name  AS first_sender_name,
+       fi.sender_email AS first_sender_email,
+       COALESCE(mc.message_count, 0) AS message_count,
+       la.last_received_at
      FROM workflows w
      LEFT JOIN statuses s        ON s.code        = w.status
      LEFT JOIN users lock_user   ON lock_user.id  = w.locked_by
@@ -29,8 +52,11 @@ async function listWorkflows(user) {
        ORDER BY fv.version_number DESC LIMIT 1
      ) latest_fv ON true
      LEFT JOIN users draft_user  ON draft_user.id = latest_fv.created_by
+     LEFT JOIN first_inbound fi  ON fi.workflow_id = w.id
+     LEFT JOIN last_activity la  ON la.workflow_id = w.id
+     LEFT JOIN msg_counts mc     ON mc.workflow_id = w.id
      ${where}
-     ORDER BY w.created_at DESC`,
+     ORDER BY COALESCE(la.last_received_at, w.created_at) DESC`,
     params
   );
   return camelize(rows);

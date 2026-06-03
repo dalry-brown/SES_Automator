@@ -4,7 +4,7 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Search, BarChart2, FileText, ExternalLink, Mail, Pencil, BookOpen, MessageSquare } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
-import { emailsApi, attachmentsApi, othersApi, workflowsApi } from '@/lib/api';
+import { attachmentsApi, othersApi, workflowsApi } from '@/lib/api';
 import { useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/components/ui/Toast';
 import { useWorkflows } from '@/lib/hooks/useWorkflows';
@@ -15,7 +15,7 @@ import { AttachmentChip, AttachmentSidebarView } from '@/components/ui/Attachmen
 import { ThreadView } from '@/components/ui/ThreadView';
 import { PageSpinner } from '@/components/ui/Spinner';
 import { formatDateTime, formatDate, formatDraftEditor, cn } from '@/lib/utils';
-import type { ThreadMessage, WorkflowStatus, Attachment } from '@/types';
+import type { ThreadMessage, WorkflowStatus, Attachment, Workflow } from '@/types';
 
 type FilterKey = 'all' | 'draft' | WorkflowStatus;
 type SideTab = 'details' | 'thread';
@@ -32,39 +32,43 @@ const FILTERS: { key: FilterKey; label: string }[] = [
 
 const ASSIGN_TYPES = ['Change order', 'PO top-up', 'PR', 'General enquiry', 'AP', 'Other'];
 
-// ── Grouped conversation structure ─────────────────────────────────────────────
+// ── Conversation group (built from workflow-level data, no messages array) ──────
 interface ConversationGroup {
   workflowId: string;
   supplierName: string | null;
   status: WorkflowStatus;
   statusLabel: string;
   firstReceivedAt: string | null;
-  messages: ThreadMessage[];
+  firstSubject: string | null;
+  firstSenderName: string | null;
+  messageCount: number;
+  hasNewMessage: boolean;
+  hasDraft: boolean;
+  lockedBy: string | null;
+  lockedAt: string | null;
+  lockedByName: string | null;
+  lockedByEmail: string | null;
+  draftEditorName: string | null;
 }
 
-function groupByWorkflow(emails: ThreadMessage[]): ConversationGroup[] {
-  const map = new Map<string, ConversationGroup>();
-  for (const msg of emails) {
-    const wfId = msg.workflowId;
-    if (!map.has(wfId)) {
-      map.set(wfId, {
-        workflowId:      wfId,
-        supplierName:    msg.supplierName,
-        status:          msg.status,
-        statusLabel:     msg.statusLabel,
-        firstReceivedAt: msg.receivedAt,
-        messages: [],
-      });
-    }
-    const group = map.get(wfId)!;
-    group.messages.push(msg);
-    if (msg.receivedAt && group.firstReceivedAt && msg.receivedAt < group.firstReceivedAt) {
-      group.firstReceivedAt = msg.receivedAt;
-    }
-    group.status      = msg.status;
-    group.statusLabel = msg.statusLabel;
-  }
-  return Array.from(map.values());
+function workflowsToGroups(workflows: Workflow[]): ConversationGroup[] {
+  return workflows.map((wf) => ({
+    workflowId:      wf.id,
+    supplierName:    wf.supplierName,
+    status:          wf.status,
+    statusLabel:     wf.statusLabel,
+    firstReceivedAt: wf.lastReceivedAt ?? wf.createdAt,
+    firstSubject:    wf.firstSubject ?? null,
+    firstSenderName: wf.firstSenderName ?? null,
+    messageCount:    wf.messageCount ?? 0,
+    hasNewMessage:   wf.hasNewMessage,
+    hasDraft:        wf.hasDraft,
+    lockedBy:        wf.lockedBy,
+    lockedAt:        wf.lockedAt,
+    lockedByName:    wf.lockedByName ?? null,
+    lockedByEmail:   wf.lockedByEmail ?? null,
+    draftEditorName: wf.draftEditorName ?? null,
+  }));
 }
 
 export default function HomePage() {
@@ -83,12 +87,16 @@ export default function HomePage() {
 
   const prevNewMessageIds = useRef<Set<string>>(new Set());
 
-  const { data: wfData } = useWorkflows();
-  const { data: emailsData, isLoading } = useQuery({
-    queryKey: ['emails'],
-    queryFn:  () => emailsApi.list(),
-    refetchInterval: 60_000,
+  const { data: wfData, isLoading } = useWorkflows();
+  const wfs = wfData ?? [];
+
+  const { data: msgData } = useQuery({
+    queryKey: ['messages', selected?.workflowId],
+    queryFn:  () => workflowsApi.getMessages(selected!.workflowId),
+    enabled:  !!selected?.workflowId,
+    staleTime: 0,
   });
+  const msgs: ThreadMessage[] = msgData?.messages ?? [];
 
   const { data: attData } = useQuery({
     queryKey: ['attachments', 'workflow', selected?.workflowId],
@@ -97,37 +105,31 @@ export default function HomePage() {
   });
   const attachments: Attachment[] = attData?.attachments ?? [];
 
-  const wfs    = wfData ?? [];
-  const emails = emailsData?.emails ?? [];
-
-  const reviewCount   = new Set(emails.filter((e) => e.status === 'received').map((e) => e.workflowId)).size;
+  const reviewCount   = wfs.filter((w) => w.status === 'received').length;
   const approvalCount = wfs.filter((w) => w.status === 'pending_approval').length;
   const approvedCount = wfs.filter((w) => w.status === 'approved').length;
   const sentCount     = wfs.filter((w) => w.status === 'sent' || w.status === 'closed').length;
   const totalCount    = wfs.length;
 
   const groups = useMemo(() => {
-    let list = emails;
+    let list = wfs;
     if (filter === 'draft') {
-      list = list.filter((e) => {
-        const wf = wfs.find((w) => w.id === e.workflowId);
-        return wf?.hasDraft && wf.status === 'received';
-      });
+      list = list.filter((w) => w.hasDraft && w.status === 'received');
     } else if (filter !== 'all') {
-      list = list.filter((e) => e.status === filter);
+      list = list.filter((w) => w.status === filter);
     }
     if (search.trim()) {
       const q = search.toLowerCase();
       list = list.filter(
-        (e) =>
-          e.subject?.toLowerCase().includes(q) ||
-          e.senderEmail?.toLowerCase().includes(q) ||
-          e.senderName?.toLowerCase().includes(q) ||
-          e.supplierName?.toLowerCase().includes(q),
+        (w) =>
+          w.firstSubject?.toLowerCase().includes(q) ||
+          w.firstSenderEmail?.toLowerCase().includes(q) ||
+          w.firstSenderName?.toLowerCase().includes(q) ||
+          w.supplierName?.toLowerCase().includes(q),
       );
     }
-    return groupByWorkflow(list);
-  }, [emails, filter, search, wfs]);
+    return workflowsToGroups(list);
+  }, [wfs, filter, search]);
 
   // Toast notification when a new vendor reply arrives (while page is open)
   useEffect(() => {
@@ -154,21 +156,17 @@ export default function HomePage() {
 
   const handleAssign = async (category: string) => {
     if (!selected || assigning) return;
-    const latest = [...selected.messages].sort(
-      (a, b) => new Date(b.receivedAt ?? 0).getTime() - new Date(a.receivedAt ?? 0).getTime()
-    )[0];
     setAssigning(true);
     try {
       await othersApi.create({
         workflowId:   selected.workflowId ?? undefined,
         category,
         description:  category,
-        supplierName: selected.supplierName || latest?.senderName || undefined,
+        supplierName: selected.supplierName || selected.firstSenderName || undefined,
       });
       if (selected.workflowId) {
         await workflowsApi.setStatus(selected.workflowId, 'other' as WorkflowStatus);
       }
-      qc.invalidateQueries({ queryKey: ['emails'] });
       qc.invalidateQueries({ queryKey: ['workflows'] });
       qc.invalidateQueries({ queryKey: ['others'] });
       success('Assigned to Others.');
@@ -187,9 +185,9 @@ export default function HomePage() {
     }
   };
 
-  const sortedMsgs   = selected ? [...selected.messages].sort(
+  const sortedMsgs   = [...msgs].sort(
     (a, b) => new Date(a.receivedAt ?? 0).getTime() - new Date(b.receivedAt ?? 0).getTime()
-  ) : [];
+  );
   const firstMsg      = sortedMsgs[0] ?? null;
   const isUnprocessed = selected?.status === 'received';
   const ccList = firstMsg?.ccRecipients?.map((r) => r.emailAddress.address).join(', ');
@@ -261,21 +259,17 @@ export default function HomePage() {
                 <div className="divide-y divide-ce-border">
                   {groups.map((group) => {
                     const isSelWf = selected?.workflowId === group.workflowId;
-                    const wf = wfs.find((w) => w.id === group.workflowId);
-                    const hasNew = !!wf?.hasNewMessage;
-                    const lockAgeMin = wf?.lockedAt
-                      ? (Date.now() - new Date(wf.lockedAt).getTime()) / 60000
+                    const hasNew = group.hasNewMessage;
+                    const lockAgeMin = group.lockedAt
+                      ? (Date.now() - new Date(group.lockedAt).getTime()) / 60000
                       : 999;
-                    const isBeingEdited = !!wf?.lockedBy && lockAgeMin < 15;
+                    const isBeingEdited = !!group.lockedBy && lockAgeMin < 15;
                     const editorName = isBeingEdited
-                      ? (wf?.lockedByName ?? wf?.lockedByEmail ?? 'Someone')
+                      ? (group.lockedByName ?? group.lockedByEmail ?? 'Someone')
                       : null;
-                    const isDraft = !!wf?.hasDraft && wf.status === 'received';
-                    const draftEditor = isDraft ? formatDraftEditor(wf?.draftEditorName ?? null) : null;
-                    const msgCount = group.messages.length;
-                    const displayMsg = [...group.messages].sort(
-                      (a, b) => new Date(a.receivedAt ?? 0).getTime() - new Date(b.receivedAt ?? 0).getTime()
-                    )[0];
+                    const isDraft = group.hasDraft && group.status === 'received';
+                    const draftEditor = isDraft ? formatDraftEditor(group.draftEditorName ?? null) : null;
+                    const msgCount = group.messageCount;
 
                     return (
                       <div
@@ -306,7 +300,7 @@ export default function HomePage() {
                               'text-[13px] font-medium truncate',
                               hasNew ? 'text-ce-text font-semibold' : 'text-ce-text',
                             )}>
-                              {group.supplierName || group.messages[0]?.senderName || 'Unknown sender'}
+                              {group.supplierName || group.firstSenderName || 'Unknown sender'}
                             </span>
                             {msgCount > 1 && (
                               <span className="flex-shrink-0 bg-ce-navy/10 text-ce-navy text-[11px] font-semibold px-1.5 py-0.5 rounded-full">
@@ -315,7 +309,7 @@ export default function HomePage() {
                             )}
                             {isDraft && !isBeingEdited && (
                               <span
-                                title={`Draft saved by ${wf?.draftEditorName ?? 'a cost engineer'}`}
+                                title={`Draft saved by ${group.draftEditorName ?? 'a cost engineer'}`}
                                 className="flex-shrink-0 flex items-center gap-1 bg-sky-50 text-sky-600 border border-sky-200 text-[11px] font-semibold px-1.5 py-0.5 rounded-full"
                               >
                                 <BookOpen size={9} />
@@ -339,7 +333,7 @@ export default function HomePage() {
                             )}
                           </div>
                           <div className="text-[12px] text-ce-muted truncate">
-                            {displayMsg?.subject || '(no subject)'}
+                            {group.firstSubject || '(no subject)'}
                           </div>
                         </div>
 
@@ -386,9 +380,9 @@ export default function HomePage() {
                     {tab === 'thread' ? (
                       <span className="flex items-center gap-1">
                         Thread
-                        {selected.messages.length > 1 && (
+                        {msgs.length > 1 && (
                           <span className="bg-ce-navy/10 text-ce-navy text-[10px] font-bold px-1 rounded-full">
-                            {selected.messages.length}
+                            {msgs.length}
                           </span>
                         )}
                       </span>
@@ -399,7 +393,6 @@ export default function HomePage() {
 
               {activeTab === 'thread' ? (
                 <ThreadView
-                  messages={selected.messages}
                   workflowId={selected.workflowId}
                   canReply={isEditor}
                 />
@@ -422,12 +415,12 @@ export default function HomePage() {
                       <div className="bg-ce-bg border border-ce-border rounded-lg p-2.5 text-[13px] text-ce-text leading-relaxed max-h-[100px] overflow-y-auto whitespace-pre-wrap">
                         {firstMsg?.bodyPreview ?? '(no body preview)'}
                       </div>
-                      {selected.messages.length > 1 && (
+                      {msgs.length > 1 && (
                         <button
                           onClick={() => setActiveTab('thread')}
                           className="mt-1.5 text-[11.5px] text-[#1b3a6b] hover:underline font-medium"
                         >
-                          {selected.messages.length - 1} more message{selected.messages.length > 2 ? 's' : ''} — view thread →
+                          {msgs.length - 1} more message{msgs.length > 2 ? 's' : ''} — view thread →
                         </button>
                       )}
                     </PanelSection>

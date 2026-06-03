@@ -55,6 +55,11 @@ export interface Workflow {
   draftEditorName: string | null;
   draftEditorEmail: string | null;
   hasNewMessage: boolean;
+  firstSubject: string | null;
+  firstSenderName: string | null;
+  firstSenderEmail: string | null;
+  messageCount: number;
+  lastReceivedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }

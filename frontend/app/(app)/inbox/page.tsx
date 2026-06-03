@@ -4,7 +4,7 @@ import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { Search, FileText, BookOpen, Pencil, Mail, MessageSquare } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
-import { emailsApi, attachmentsApi, othersApi, workflowsApi } from '@/lib/api';
+import { attachmentsApi, othersApi, workflowsApi } from '@/lib/api';
 import { useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/components/ui/Toast';
 import { useWorkflows } from '@/lib/hooks/useWorkflows';
@@ -14,7 +14,7 @@ import { AttachmentChip, AttachmentSidebarView } from '@/components/ui/Attachmen
 import { ThreadView } from '@/components/ui/ThreadView';
 import { PageSpinner } from '@/components/ui/Spinner';
 import { formatDate, formatDateTime, formatDraftEditor, daysSince, cn } from '@/lib/utils';
-import type { ThreadMessage, WorkflowStatus, Attachment } from '@/types';
+import type { ThreadMessage, WorkflowStatus, Attachment, Workflow } from '@/types';
 
 const ASSIGN_TYPES = ['Change order', 'PO top-up', 'PR', 'General enquiry', 'AP', 'Other'];
 
@@ -33,32 +33,34 @@ interface ConversationGroup {
   status: WorkflowStatus;
   statusLabel: string;
   firstReceivedAt: string | null;
-  messages: ThreadMessage[];
+  firstSubject: string | null;
+  firstSenderName: string | null;
+  messageCount: number;
+  hasNewMessage: boolean;
+  hasDraft: boolean;
+  lockedBy: string | null;
+  lockedAt: string | null;
+  lockedByName: string | null;
+  draftEditorName: string | null;
 }
 
-function groupByWorkflow(emails: ThreadMessage[]): ConversationGroup[] {
-  const map = new Map<string, ConversationGroup>();
-  for (const msg of emails) {
-    const wfId = msg.workflowId;
-    if (!map.has(wfId)) {
-      map.set(wfId, {
-        workflowId:      wfId,
-        supplierName:    msg.supplierName,
-        status:          msg.status,
-        statusLabel:     msg.statusLabel,
-        firstReceivedAt: msg.receivedAt,
-        messages: [],
-      });
-    }
-    const group = map.get(wfId)!;
-    group.messages.push(msg);
-    if (msg.receivedAt && group.firstReceivedAt && msg.receivedAt < group.firstReceivedAt) {
-      group.firstReceivedAt = msg.receivedAt;
-    }
-    group.status      = msg.status;
-    group.statusLabel = msg.statusLabel;
-  }
-  return Array.from(map.values());
+function workflowsToGroups(workflows: Workflow[]): ConversationGroup[] {
+  return workflows.map((wf) => ({
+    workflowId:      wf.id,
+    supplierName:    wf.supplierName,
+    status:          wf.status,
+    statusLabel:     wf.statusLabel,
+    firstReceivedAt: wf.lastReceivedAt ?? wf.createdAt,
+    firstSubject:    wf.firstSubject ?? null,
+    firstSenderName: wf.firstSenderName ?? null,
+    messageCount:    wf.messageCount ?? 0,
+    hasNewMessage:   wf.hasNewMessage,
+    hasDraft:        wf.hasDraft,
+    lockedBy:        wf.lockedBy,
+    lockedAt:        wf.lockedAt,
+    lockedByName:    wf.lockedByName ?? null,
+    draftEditorName: wf.draftEditorName ?? null,
+  }));
 }
 
 export default function InboxPage() {
@@ -75,13 +77,16 @@ export default function InboxPage() {
   const [previewAtt, setPreviewAtt] = useState<Attachment | null>(null);
   const [assigning, setAssigning]   = useState(false);
 
-  const { data, isLoading } = useQuery({
-    queryKey: ['emails'],
-    queryFn:  () => emailsApi.list(),
-    refetchInterval: 60_000,
-  });
-  const { data: wfData } = useWorkflows();
+  const { data: wfData, isLoading } = useWorkflows();
   const wfs = wfData ?? [];
+
+  const { data: msgData } = useQuery({
+    queryKey: ['messages', selected?.workflowId],
+    queryFn:  () => workflowsApi.getMessages(selected!.workflowId),
+    enabled:  !!selected?.workflowId,
+    staleTime: 0,
+  });
+  const msgs: ThreadMessage[] = msgData?.messages ?? [];
 
   const { data: attData } = useQuery({
     queryKey: ['attachments', 'workflow', selected?.workflowId],
@@ -91,33 +96,29 @@ export default function InboxPage() {
   const attachments: Attachment[] = attData?.attachments ?? [];
 
   const groups = useMemo(() => {
-    let list = (data?.emails ?? []).filter((e) => e.status === 'received');
+    let list = wfs.filter((w) => w.status === 'received');
 
     if (filter === 'draft') {
-      list = list.filter((e) => {
-        const wf = wfs.find((w) => w.id === e.workflowId);
-        return !!wf?.hasDraft;
-      });
+      list = list.filter((w) => w.hasDraft);
     } else if (filter === 'in_progress') {
-      list = list.filter((e) => {
-        const wf = wfs.find((w) => w.id === e.workflowId);
-        if (!wf?.lockedBy || !wf.lockedAt) return false;
-        return (Date.now() - new Date(wf.lockedAt).getTime()) / 60000 < 15;
+      list = list.filter((w) => {
+        if (!w.lockedBy || !w.lockedAt) return false;
+        return (Date.now() - new Date(w.lockedAt).getTime()) / 60000 < 15;
       });
     }
 
     if (search.trim()) {
       const q = search.toLowerCase();
       list = list.filter(
-        (e) =>
-          e.subject?.toLowerCase().includes(q) ||
-          e.senderEmail?.toLowerCase().includes(q) ||
-          e.senderName?.toLowerCase().includes(q) ||
-          e.supplierName?.toLowerCase().includes(q),
+        (w) =>
+          w.firstSubject?.toLowerCase().includes(q) ||
+          w.firstSenderEmail?.toLowerCase().includes(q) ||
+          w.firstSenderName?.toLowerCase().includes(q) ||
+          w.supplierName?.toLowerCase().includes(q),
       );
     }
-    return groupByWorkflow(list);
-  }, [data, wfs, filter, search]);
+    return workflowsToGroups(list);
+  }, [wfs, filter, search]);
 
   if (isLoading) return <PageSpinner />;
 
@@ -135,12 +136,11 @@ export default function InboxPage() {
         workflowId:   selected.workflowId ?? undefined,
         category,
         description:  category,
-        supplierName: selected.supplierName || selected.messages[0]?.senderName || undefined,
+        supplierName: selected.supplierName || selected.firstSenderName || undefined,
       });
       if (selected.workflowId) {
         await workflowsApi.setStatus(selected.workflowId, 'other' as WorkflowStatus);
       }
-      qc.invalidateQueries({ queryKey: ['emails'] });
       qc.invalidateQueries({ queryKey: ['workflows'] });
       qc.invalidateQueries({ queryKey: ['others'] });
       success('Assigned to Others.');
@@ -159,12 +159,9 @@ export default function InboxPage() {
     }
   };
 
-  // Sort messages oldest→newest for Details tab
-  const sortedMsgs = selected
-    ? [...selected.messages].sort(
-        (a, b) => new Date(a.receivedAt ?? 0).getTime() - new Date(b.receivedAt ?? 0).getTime()
-      )
-    : [];
+  const sortedMsgs = [...msgs].sort(
+    (a, b) => new Date(a.receivedAt ?? 0).getTime() - new Date(b.receivedAt ?? 0).getTime()
+  );
   const firstMsg = sortedMsgs[0] ?? null;
   const ccList   = firstMsg?.ccRecipients?.map((r) => r.emailAddress.address).join(', ');
 
@@ -218,19 +215,14 @@ export default function InboxPage() {
                 <div className="divide-y divide-ce-border">
                   {groups.map((group) => {
                     const isSelWf = selected?.workflowId === group.workflowId;
-                    const wf = wfs.find((w) => w.id === group.workflowId);
-                    const hasNew = !!wf?.hasNewMessage;
-                    const lockAgeMin = wf?.lockedAt
-                      ? (Date.now() - new Date(wf.lockedAt).getTime()) / 60000
+                    const hasNew = group.hasNewMessage;
+                    const lockAgeMin = group.lockedAt
+                      ? (Date.now() - new Date(group.lockedAt).getTime()) / 60000
                       : 999;
-                    const isBeingEdited = !!wf?.lockedBy && lockAgeMin < 15;
-                    const isDraft = !!wf?.hasDraft && !isBeingEdited;
-                    const draftEditor = formatDraftEditor(wf?.draftEditorName ?? null);
-                    const msgCount = group.messages.length;
-                    // First inbound message for display
-                    const displayMsg = [...group.messages].sort(
-                      (a, b) => new Date(a.receivedAt ?? 0).getTime() - new Date(b.receivedAt ?? 0).getTime()
-                    )[0];
+                    const isBeingEdited = !!group.lockedBy && lockAgeMin < 15;
+                    const isDraft = group.hasDraft && !isBeingEdited;
+                    const draftEditor = formatDraftEditor(group.draftEditorName ?? null);
+                    const msgCount = group.messageCount;
 
                     return (
                       <div
@@ -257,7 +249,7 @@ export default function InboxPage() {
                               {group.workflowId}
                             </span>
                             <span className="text-[13px] font-medium text-ce-text truncate">
-                              {group.supplierName || displayMsg?.senderName || 'Unknown sender'}
+                              {group.supplierName || group.firstSenderName || 'Unknown sender'}
                             </span>
                             {msgCount > 1 && (
                               <span className="flex-shrink-0 flex items-center gap-0.5 bg-ce-navy/10 text-ce-navy text-[11px] font-semibold px-1.5 py-0.5 rounded-full">
@@ -278,7 +270,7 @@ export default function InboxPage() {
                             )}
                           </div>
                           <div className="text-[12px] text-ce-muted truncate">
-                            {displayMsg?.subject || '(no subject)'}
+                            {group.firstSubject || '(no subject)'}
                           </div>
                         </div>
 
@@ -324,9 +316,9 @@ export default function InboxPage() {
                     {tab === 'thread' ? (
                       <span className="flex items-center gap-1">
                         Thread
-                        {selected.messages.length > 0 && (
+                        {msgs.length > 0 && (
                           <span className="bg-ce-navy/10 text-ce-navy text-[10px] font-bold px-1 rounded-full">
-                            {selected.messages.length}
+                            {msgs.length}
                           </span>
                         )}
                       </span>
@@ -337,7 +329,6 @@ export default function InboxPage() {
 
               {activeTab === 'thread' ? (
                 <ThreadView
-                  messages={selected.messages}
                   workflowId={selected.workflowId}
                   canReply={isEditor}
                 />
@@ -360,12 +351,12 @@ export default function InboxPage() {
                       <div className="bg-ce-bg border border-ce-border rounded-lg p-2.5 text-[13px] text-ce-text leading-relaxed max-h-[100px] overflow-y-auto whitespace-pre-wrap">
                         {firstMsg?.bodyPreview ?? '(no body preview)'}
                       </div>
-                      {selected.messages.length > 1 && (
+                      {msgs.length > 1 && (
                         <button
                           onClick={() => setActiveTab('thread')}
                           className="mt-1.5 text-[11.5px] text-[#1b3a6b] hover:underline font-medium"
                         >
-                          {selected.messages.length - 1} more message{selected.messages.length > 2 ? 's' : ''} — view thread →
+                          {msgs.length - 1} more message{msgs.length > 2 ? 's' : ''} — view thread →
                         </button>
                       )}
                     </PanelSection>

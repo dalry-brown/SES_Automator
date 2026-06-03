@@ -27,6 +27,16 @@ async function ingestEmail(messageId) {
     workflowId = existingWf.id;
     isNewMessage = true; // vendor reply on an existing thread
     console.log(`[EmailService] Thread match → workflow ${workflowId}`);
+
+    // Re-open the workflow if it was already processed — a new vendor reply needs attention
+    if (existingWf.status !== 'received') {
+      await pool.query(
+        `UPDATE workflows SET status = 'received', updated_at = NOW() WHERE id = $1`,
+        [workflowId]
+      );
+      emit('workflow.updated', { workflowId });
+      console.log(`[EmailService] Workflow ${workflowId} re-opened to 'received' (was '${existingWf.status}')`);
+    }
   } else {
     // Duplicate invoice warning (same supplier + invoice number)
     if (invoiceNumber && supplierName) {

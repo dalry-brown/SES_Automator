@@ -10,7 +10,7 @@ import { formatDateTime, cn } from '@/lib/utils';
 import type { ThreadMessage, WorkflowStatus } from '@/types';
 
 interface ThreadViewProps {
-  messages: ThreadMessage[]; // initial/fallback messages from parent
+  messages?: ThreadMessage[];
   workflowId: string;
   canReply?: boolean;
 }
@@ -89,7 +89,7 @@ function MessageBubble({ msg, highlighted }: { msg: ThreadMessage; highlighted: 
   );
 }
 
-export function ThreadView({ messages: initialMessages, workflowId, canReply = false }: ThreadViewProps) {
+export function ThreadView({ messages: initialMessages = [], workflowId, canReply = false }: ThreadViewProps) {
   const qc   = useQueryClient();
   const { user } = useAuth();
   const { success, error: toastError } = useToast();
