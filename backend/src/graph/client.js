@@ -32,7 +32,7 @@ async function _acquireTokenSilent(client) {
   if (!accounts || accounts.length === 0) return null;
   try {
     const result = await client.acquireTokenSilent({
-      scopes: ['Mail.Read', 'Mail.Send', 'User.Read'].map(
+      scopes: ['Mail.ReadWrite', 'Mail.Send', 'User.Read'].map(
         (s) => `https://graph.microsoft.com/${s}`
       ),
       account: accounts[0],
@@ -47,7 +47,7 @@ async function _acquireTokenByDeviceCode(client) {
   return new Promise((resolve, reject) => {
     client
       .acquireTokenByDeviceCode({
-        scopes: ['Mail.Read', 'Mail.Send', 'User.Read'].map(
+        scopes: ['Mail.ReadWrite', 'Mail.Send', 'User.Read'].map(
           (s) => `https://graph.microsoft.com/${s}`
         ),
         deviceCodeCallback: (response) => {

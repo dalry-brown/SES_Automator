@@ -496,8 +496,8 @@ async function replyToVendor(workflowId, user, comment) {
     })
     .join('');
 
-  // replyAll action needs only Mail.Send; Graph auto-populates all original TO/CC recipients
-  await sendReplyAll(threadRows[0].message_id, htmlBody);
+  // createReplyAll draft pipeline — requires Mail.ReadWrite, sends as a true thread reply
+  await sendCustomReply(threadRows[0].message_id, htmlBody);
 
   const { appendThreadMessage } = require('./threadService');
   await appendThreadMessage(workflowId, {
