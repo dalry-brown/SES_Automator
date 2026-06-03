@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useRef, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { Search, BarChart2, FileText, ExternalLink, Mail, Pencil, BookOpen, MessageSquare } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
@@ -74,7 +74,7 @@ function workflowsToGroups(workflows: Workflow[]): ConversationGroup[] {
 export default function HomePage() {
   const router    = useRouter();
   const qc        = useQueryClient();
-  const { success, error: toastError, warning: toastInfo } = useToast();
+  const { success, error: toastError } = useToast();
   const { effectiveRole } = useAuth();
   const isEditor = effectiveRole === 'editor' || effectiveRole === 'admin';
 
@@ -84,8 +84,6 @@ export default function HomePage() {
   const [activeTab, setActiveTab]   = useState<SideTab>('details');
   const [previewAtt, setPreviewAtt] = useState<Attachment | null>(null);
   const [assigning, setAssigning]   = useState(false);
-
-  const prevNewMessageIds = useRef<Set<string>>(new Set());
 
   const { data: wfData, isLoading } = useWorkflows();
   const wfs = wfData ?? [];
@@ -130,21 +128,6 @@ export default function HomePage() {
     }
     return workflowsToGroups(list);
   }, [wfs, filter, search]);
-
-  // Toast notification when a new vendor reply arrives (while page is open)
-  useEffect(() => {
-    const currentNewIds = new Set(
-      wfs.filter((w) => w.hasNewMessage).map((w) => w.id)
-    );
-    // Find IDs that are newly new (not in previous set)
-    const brandNew = [...currentNewIds].filter((id) => !prevNewMessageIds.current.has(id));
-    brandNew.forEach((id) => {
-      const wf = wfs.find((w) => w.id === id);
-      const name = wf?.supplierName ?? id;
-      toastInfo(`New message from ${name} — click to view`);
-    });
-    prevNewMessageIds.current = currentNewIds;
-  }, [wfs]);
 
   if (isLoading) return <PageSpinner />;
 

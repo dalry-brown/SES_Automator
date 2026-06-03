@@ -108,24 +108,27 @@ export function ThreadView({ messages: initialMessages = [], workflowId, canRepl
   });
   const serverMessages: ThreadMessage[] = fetchedData?.messages ?? initialMessages;
 
-  // IDs of new messages captured on mount — drives the highlight ring
-  const [highlightedIds] = useState<Set<string>>(
-    () => new Set(initialMessages.filter((m) => m.isNew).map((m) => m.id))
-  );
+  // IDs of new messages captured when server data first arrives — drives the highlight ring
+  const highlightedIds = useRef<Set<string>>(new Set());
 
-  // Mark read once on open if any new messages exist
+  // Mark read once when server messages load and contain new messages
+  const hasCalledMarkRead = useRef(false);
+  useEffect(() => { hasCalledMarkRead.current = false; }, [workflowId]);
   useEffect(() => {
-    const hasNew = initialMessages.some((m) => m.isNew);
-    if (!hasNew) return;
+    if (hasCalledMarkRead.current) return;
+    const newMsgs = serverMessages.filter((m) => m.isNew);
+    if (newMsgs.length === 0) return;
+    hasCalledMarkRead.current = true;
+    // Capture new IDs for the highlight ring before clearing
+    newMsgs.forEach((m) => highlightedIds.current.add(m.id));
     workflowsApi.markRead(workflowId)
       .then(() => {
         qc.invalidateQueries({ queryKey: ['workflows'] });
-        qc.invalidateQueries({ queryKey: ['emails'] });
         qc.invalidateQueries({ queryKey: ['messages', workflowId] });
       })
       .catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workflowId]);
+  }, [serverMessages, workflowId]);
 
   // Merge server + optimistic messages.
   // Deduplicate: remove a local message once the same outbound content arrives from server.
@@ -210,7 +213,7 @@ export function ThreadView({ messages: initialMessages = [], workflowId, canRepl
           <MessageBubble
             key={msg.id}
             msg={msg}
-            highlighted={highlightedIds.has(msg.id)}
+            highlighted={highlightedIds.current.has(msg.id)}
           />
         ))}
         <div ref={bottomRef} />
