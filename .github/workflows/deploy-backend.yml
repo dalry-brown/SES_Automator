@@ -38,15 +38,27 @@ jobs:
           SUBSCRIPTION=$(az account show --query id --output tsv)
           IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-          # Switch to single-revision mode via REST API (CLI flags for this are version-gated)
+          # Switch to single-revision mode so the new revision gets 100% traffic automatically
           az rest \
             --method PATCH \
             --url "https://management.azure.com/subscriptions/$SUBSCRIPTION/resourceGroups/ses-automator-rg/providers/Microsoft.App/containerApps/ses-automator-api?api-version=2023-05-01" \
             --headers "Content-Type=application/json" \
             --body '{"properties":{"configuration":{"activeRevisionsMode":"Single"}}}'
 
-          # Deploy new image; --revision-suffix makes the revision name unique so Azure
-          # always creates a new one and (in single mode) routes 100% traffic to it
+          # Wait for the mode-switch provisioning to finish before updating the image
+          echo "Waiting for provisioning to complete..."
+          for i in $(seq 1 30); do
+            STATE=$(az containerapp show \
+              --name ses-automator-api \
+              --resource-group ses-automator-rg \
+              --query properties.provisioningState \
+              --output tsv)
+            echo "  state: $STATE"
+            [ "$STATE" = "Succeeded" ] && break
+            sleep 10
+          done
+
+          # Deploy new image — unique suffix forces a new revision; single mode activates it
           az containerapp update \
             --name ses-automator-api \
             --resource-group ses-automator-rg \
