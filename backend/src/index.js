@@ -5,6 +5,7 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 
 const errorHandler = require('./middleware/errorHandler');
+const pool = require('./db/pool');
 const { getToken } = require('./graph/client');
 const { registerSubscription } = require('./graph/webhook');
 const { startRenewalJob } = require('./graph/subscriptionRenewer');
@@ -103,6 +104,16 @@ async function initGraph(attempt = 1) {
 // ── Startup ───────────────────────────────────────────────────────────────────
 async function start() {
   try {
+    // Ensure the MSAL token cache table exists before Graph auth runs.
+    // This single idempotent statement is safe to run on every boot.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS msal_token_cache (
+        id          TEXT PRIMARY KEY DEFAULT 'singleton',
+        data        TEXT NOT NULL,
+        updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `).catch((err) => console.warn('[Boot] msal_token_cache table check failed:', err.message));
+
     startLockCleanupJob();
     startTrackerSyncJob();
     warmupBrowser().catch((err) => console.warn('[Boot] Puppeteer warm-up failed (non-fatal):', err.message));

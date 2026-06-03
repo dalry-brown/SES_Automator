@@ -356,3 +356,12 @@ INSERT INTO statuses (code, label, description)
 ALTER TABLE workflows DROP CONSTRAINT IF EXISTS workflows_status_check;
 ALTER TABLE workflows ADD CONSTRAINT workflows_status_check
   CHECK (status IN ('received','in_progress','pending_approval','approved','sent','closed','queried','returned','cancelled','other'));
+
+-- =============================================================================
+-- MSAL TOKEN CACHE  (single-row store so Graph auth survives container restarts)
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS msal_token_cache (
+  id          TEXT PRIMARY KEY DEFAULT 'singleton',
+  data        TEXT NOT NULL,
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

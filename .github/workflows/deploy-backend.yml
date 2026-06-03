@@ -43,3 +43,4 @@ jobs:
           imageToDeploy: sesautomatoracr.azurecr.io/${{ env.IMAGE_NAME }}:latest
           targetPort: 8080
           ingress: external
+          minReplicas: 1

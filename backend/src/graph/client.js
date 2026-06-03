@@ -1,32 +1,12 @@
 require('dotenv').config();
 const msal = require('@azure/msal-node');
-const fs = require('fs');
-const path = require('path');
+const { dbCachePlugin } = require('./dbCachePlugin');
 
 const GRAPH_MODE = process.env.GRAPH_MODE || 'personal';
-const TOKEN_CACHE_FILE = path.join(__dirname, '../../.msal-cache.json');
 
 let _msalClient = null;
 let _cachedToken = null;
 let _tokenPromise = null; // lock: prevents concurrent device-code flows
-
-// File-based MSAL token cache so device code auth survives server restarts
-const cachePlugin = {
-  beforeCacheAccess: async (cacheContext) => {
-    try {
-      if (fs.existsSync(TOKEN_CACHE_FILE)) {
-        cacheContext.tokenCache.deserialize(fs.readFileSync(TOKEN_CACHE_FILE, 'utf8'));
-      }
-    } catch (_) { /* ignore corrupt cache */ }
-  },
-  afterCacheAccess: async (cacheContext) => {
-    if (cacheContext.cacheHasChanged) {
-      try {
-        fs.writeFileSync(TOKEN_CACHE_FILE, cacheContext.tokenCache.serialize(), 'utf8');
-      } catch (_) { /* ignore write errors */ }
-    }
-  },
-};
 
 function _buildMsalClient() {
   if (GRAPH_MODE === 'org') {
@@ -43,7 +23,7 @@ function _buildMsalClient() {
       clientId: process.env.CLIENT_ID,
       authority: 'https://login.microsoftonline.com/consumers',
     },
-    cache: { cachePlugin },
+    cache: { cachePlugin: dbCachePlugin },
   });
 }
 
