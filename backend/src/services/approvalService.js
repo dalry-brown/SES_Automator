@@ -637,14 +637,13 @@ async function sendToVendor(workflowId, user, { toRecipients, ccRecipients, body
     : `<p>Dear Team,</p><p>Kindly find the attached approved SES for payment processing.</p><p>Best Regards,<br/>${enteredBy}</p>`;
 
   const attachmentList = [{ name: fileName, contentType: 'application/pdf', buffer: signedBuffer }];
-  // Reply to the original vendor email so the response is in the same thread.
-  // POST /messages/{id}/replyAll only requires Mail.Send — no Mail.ReadWrite needed.
-  await sendReplyAll(
+  // createReplyAll draft pipeline — true thread reply with PDF attachment.
+  await sendCustomReply(
     threadRows[0].message_id,
     replyBody,
     attachmentList,
-    toRecipients || [],
-    ccRecipients || [],
+    toRecipients?.length ? toRecipients : undefined,
+    ccRecipients?.length ? ccRecipients : undefined,
   );
 
   await pool.query(
