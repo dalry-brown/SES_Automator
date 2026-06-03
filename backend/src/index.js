@@ -53,7 +53,7 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 // ── Health ────────────────────────────────────────────────────────────────────
-app.get('/health', (req, res) => res.json({ status: 'ok', ts: new Date().toISOString() }));
+app.get('/health', (req, res) => res.json({ status: 'ok', ts: new Date().toISOString(), v: 2 }));
 
 // ── API Routes ────────────────────────────────────────────────────────────────
 app.use('/api/auth', authRoutes);
