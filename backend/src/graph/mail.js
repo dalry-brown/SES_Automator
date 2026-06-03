@@ -63,9 +63,9 @@ async function downloadAttachment(messageId, attachmentId) {
 async function sendReplyAll(messageId, htmlBody) {
   const headers = await _headers();
 
-  // Fetch original message: recipients + SMTP ID for threading header
+  // Fetch original message for reply-all recipients and subject
   const { data: orig } = await axios.get(
-    `${_baseUrl()}/messages/${messageId}?$select=from,toRecipients,ccRecipients,subject,internetMessageId`,
+    `${_baseUrl()}/messages/${messageId}?$select=from,toRecipients,ccRecipients,subject`,
     { headers, timeout: GRAPH_TIMEOUT }
   );
 
@@ -87,13 +87,8 @@ async function sendReplyAll(messageId, htmlBody) {
     ccRecipients: ccList,
   };
 
-  // Threading headers so the reply chains in the vendor's email client
-  if (orig.internetMessageId) {
-    message.internetMessageHeaders = [
-      { name: 'In-Reply-To', value: orig.internetMessageId },
-      { name: 'References',  value: orig.internetMessageId },
-    ];
-  }
+  // Note: personal MSA accounts only allow x-prefixed internet headers —
+  // In-Reply-To/References are blocked. Clients will thread by subject match.
 
   await axios.post(
     `${_baseUrl()}/sendMail`,
