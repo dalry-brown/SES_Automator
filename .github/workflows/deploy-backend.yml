@@ -32,13 +32,6 @@ jobs:
           docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} ./backend
           docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-      - name: Ensure single-revision mode
-        run: |
-          az containerapp revision mode set \
-            --name ses-automator-api \
-            --resource-group ses-automator-rg \
-            --mode single
-
       - name: Deploy new revision
         run: |
           SHA_SHORT=$(echo "${{ github.sha }}" | cut -c1-8)
@@ -48,4 +41,5 @@ jobs:
             --image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
             --min-replicas 1 \
             --revision-suffix $SHA_SHORT \
+            --revisions-mode single \
             --output table
