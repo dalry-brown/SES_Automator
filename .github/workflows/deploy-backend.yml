@@ -29,15 +29,23 @@ jobs:
 
       - name: Build and push Docker image
         run: |
-          IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          docker build -t $IMAGE ./backend
-          docker push $IMAGE
+          docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} ./backend
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-      - name: Deploy new revision to Azure Container Apps
+      - name: Ensure single-revision mode
         run: |
+          az containerapp revision mode set \
+            --name ses-automator-api \
+            --resource-group ses-automator-rg \
+            --mode single
+
+      - name: Deploy new revision
+        run: |
+          SHA_SHORT=$(echo "${{ github.sha }}" | cut -c1-8)
           az containerapp update \
             --name ses-automator-api \
             --resource-group ses-automator-rg \
             --image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
             --min-replicas 1 \
+            --revision-suffix $SHA_SHORT \
             --output table
