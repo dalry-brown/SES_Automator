@@ -35,11 +35,22 @@ jobs:
       - name: Deploy new revision
         run: |
           SHA_SHORT=$(echo "${{ github.sha }}" | cut -c1-8)
+          SUBSCRIPTION=$(az account show --query id --output tsv)
+          IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+          # Switch to single-revision mode via REST API (CLI flags for this are version-gated)
+          az rest \
+            --method PATCH \
+            --url "https://management.azure.com/subscriptions/$SUBSCRIPTION/resourceGroups/ses-automator-rg/providers/Microsoft.App/containerApps/ses-automator-api?api-version=2023-05-01" \
+            --headers "Content-Type=application/json" \
+            --body '{"properties":{"configuration":{"activeRevisionsMode":"Single"}}}'
+
+          # Deploy new image; --revision-suffix makes the revision name unique so Azure
+          # always creates a new one and (in single mode) routes 100% traffic to it
           az containerapp update \
             --name ses-automator-api \
             --resource-group ses-automator-rg \
-            --image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            --image $IMAGE \
             --min-replicas 1 \
             --revision-suffix $SHA_SHORT \
-            --revisions-mode single \
             --output table
