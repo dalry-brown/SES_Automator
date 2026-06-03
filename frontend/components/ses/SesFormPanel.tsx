@@ -51,7 +51,7 @@ const AUTO_FILL_KEYS: (keyof FormValues)[] = [
 
 type RefTab = 'email' | 'audit' | 'preview';
 const CURRENCIES      = ['USD', 'EUR', 'GBP', 'GHS'];
-const LICENCE_OPTIONS = ['TEN', 'Jubilee'] as const;
+const LICENCE_OPTIONS = ['Jubilee', 'TEN'] as const;
 const DESCRIPTION_MAX_WORDS = 15;
 
 function countWords(text: string): number {
@@ -1140,14 +1140,14 @@ export function SesFormPanel({
                   <div className="flex gap-1">
                     <FI
                       {...register('licence')}
-                      placeholder="Enter licence name"
+                      placeholder="Jubilee or TEN"
                       className="flex-1"
                       disabled={isReadOnly}
                     />
                     {!isReadOnly && (
                       <button
                         type="button"
-                        onClick={() => { setShowCustomLicence(false); setValue('licence', 'TEN', { shouldDirty: true }); }}
+                        onClick={() => { setShowCustomLicence(false); setValue('licence', 'Jubilee', { shouldDirty: true }); }}
                         className="px-2 py-[7px] border border-ce-border bg-ce-bg rounded-lg text-[11px] text-ce-muted hover:text-ce-navy transition-colors flex-shrink-0"
                         title="Switch back to standard options"
                       >
@@ -1157,7 +1157,7 @@ export function SesFormPanel({
                   </div>
                 ) : (
                   <FSel
-                    value={LICENCE_OPTIONS.includes(licenceValue as typeof LICENCE_OPTIONS[number]) ? licenceValue : 'TEN'}
+                    value={LICENCE_OPTIONS.includes(licenceValue as typeof LICENCE_OPTIONS[number]) ? licenceValue : 'Jubilee'}
                     onChange={(e) => {
                       if (e.target.value === '__other__') {
                         setShowCustomLicence(true);

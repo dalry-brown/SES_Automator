@@ -55,17 +55,22 @@ async function listFormVersions(formId) {
 }
 
 async function getAutofillData(vendorName, poNumber) {
+  const pattern = `${vendorName}%`;
   const { rows } = await pool.query(
     `SELECT fv.data
      FROM form_versions fv
      JOIN ses_forms sf ON sf.id = fv.form_id
      JOIN workflows w  ON w.id  = sf.workflow_id
-     WHERE w.supplier_name ILIKE $1
+     WHERE (
+       w.supplier_name                    ILIKE $1
+       OR fv.data->>'vendorName'          ILIKE $1
+       OR fv.data->'forms'->0->>'vendorName' ILIKE $1
+     )
        AND ($2::TEXT IS NULL OR w.po_number = $2)
        AND w.status IN ('approved', 'sent', 'closed')
      ORDER BY fv.created_at DESC
      LIMIT 1`,
-    [vendorName, poNumber || null]
+    [pattern, poNumber || null]
   );
   if (!rows[0]?.data) return null;
 
