@@ -17,7 +17,7 @@ const { emit } = require('./sseService');
 const FRONTEND_URL  = process.env.FRONTEND_URL  || 'http://localhost:3000';
 
 // Statuses where the form is NOT editable by a cost engineer
-const READ_ONLY_STATUSES = ['pending_approval', 'queried', 'approved', 'sent', 'closed', 'cancelled'];
+const READ_ONLY_STATUSES = ['approved', 'sent', 'closed', 'cancelled'];
 
 async function createSES(data, user) {
   const { workflowId } = data;
