@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { Search, Download } from 'lucide-react';
+import { Search, Download, ChevronDown } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { trackerApi } from '@/lib/api';
 import { StatusPill } from '@/components/ui/StatusPill';
@@ -15,16 +15,46 @@ function DurChip({ days }: { days: number | null }) {
   return <span className={cls}>{days}d</span>;
 }
 
+type MonthOption = { label: string; value: string; submittedFrom: string; submittedTo: string } | { label: string; value: 'all' };
+
+function buildMonthOptions(): MonthOption[] {
+  const opts: MonthOption[] = [{ label: 'All time', value: 'all' }];
+  const now = new Date();
+  for (let m = 0; m < 13; m++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - m, 1);
+    const from = new Date(d.getFullYear(), d.getMonth(), 1);
+    const to   = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+    const label = d.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+    const value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    opts.push({
+      label,
+      value,
+      submittedFrom: from.toISOString().slice(0, 10),
+      submittedTo:   to.toISOString().slice(0, 10),
+    });
+  }
+  return opts;
+}
+
+const MONTH_OPTIONS = buildMonthOptions();
+
 export default function TrackerPage() {
-  const [search, setSearch] = useState('');
+  const [search, setSearch]         = useState('');
+  const [selectedMonth, setMonth]   = useState<string>(MONTH_OPTIONS[1].value); // current month
+
+  const monthOpt = MONTH_OPTIONS.find((o) => o.value === selectedMonth);
+  const dateParams: Record<string, string> | undefined =
+    monthOpt && monthOpt.value !== 'all' && 'submittedFrom' in monthOpt
+      ? { submittedFrom: monthOpt.submittedFrom, submittedTo: monthOpt.submittedTo }
+      : undefined;
 
   const { data: listData, isLoading: listLoading } = useQuery({
-    queryKey: ['tracker'],
-    queryFn:  () => trackerApi.list(),
+    queryKey: ['tracker', 'list', selectedMonth],
+    queryFn:  () => trackerApi.list(dateParams),
   });
   const { data: statsData, isLoading: statsLoading } = useQuery({
-    queryKey: ['tracker', 'stats'],
-    queryFn:  () => trackerApi.stats(),
+    queryKey: ['tracker', 'stats', selectedMonth],
+    queryFn:  () => trackerApi.stats(dateParams),
   });
 
   const records = useMemo(() => {
@@ -42,20 +72,39 @@ export default function TrackerPage() {
 
   if (listLoading || statsLoading) return <PageSpinner />;
 
-  const stats = statsData?.stats?.summary;
+  const stats     = statsData?.stats?.summary;
   const avgSign   = stats?.avgDaysToSign   ? parseFloat(stats.avgDaysToSign).toFixed(1)   : null;
   const avgSubmit = stats?.avgDaysToSubmit ? parseFloat(stats.avgDaysToSubmit).toFixed(1) : null;
-  const overdue   = Number(stats?.overdue ?? 0);
-  const total     = Number(stats?.total    ?? 0);
+  const total     = Number(stats?.total ?? 0);
+  const monthLabel = monthOpt?.label ?? '';
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       {/* Stats bar */}
-      <div className="grid grid-cols-4 gap-3 px-5 py-4 border-b border-ce-border bg-white flex-shrink-0">
-        <StatCard label="Avg. days to review" value={avgSubmit ? `${avgSubmit}` : '—'} unit="days" />
-        <StatCard label="Avg. days to sign"   value={avgSign   ? `${avgSign}`   : '—'} unit="days" />
-        <StatCard label="Total workflows"      value={String(total)} />
-        <StatCard label="Overdue (>7 days)"   value={String(overdue)} valueColor={overdue > 0 ? '#991b1b' : undefined} />
+      <div className="border-b border-ce-border bg-white flex-shrink-0">
+        <div className="flex items-center justify-between px-5 pt-4 pb-2">
+          <div className="flex items-center gap-2">
+            <span className="text-[13px] font-semibold text-ce-navy">Stats for</span>
+            <div className="relative">
+              <select
+                value={selectedMonth}
+                onChange={(e) => setMonth(e.target.value)}
+                className="appearance-none border border-ce-border rounded-lg pl-3 pr-7 py-1.5 text-[13px] text-ce-navy bg-ce-bg outline-none focus:border-ce-navy cursor-pointer font-medium"
+              >
+                {MONTH_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+              <ChevronDown size={13} className="absolute right-2 top-1/2 -translate-y-1/2 text-ce-hint pointer-events-none" />
+            </div>
+          </div>
+          <div className="text-[11px] text-ce-muted">Tracking from SES submission date</div>
+        </div>
+        <div className="grid grid-cols-3 gap-3 px-5 pb-4">
+          <StatCard label="Avg. days to review" value={avgSubmit ?? '—'} unit={avgSubmit ? 'days' : undefined} hint="Email received → SES submitted" />
+          <StatCard label="Avg. days to sign"   value={avgSign   ?? '—'} unit={avgSign   ? 'days' : undefined} hint="SES submitted → Approved" />
+          <StatCard label="Total workflows"      value={String(total)} hint={selectedMonth === 'all' ? 'All time' : monthLabel} />
+        </div>
       </div>
 
       {/* Table area */}
@@ -63,7 +112,9 @@ export default function TrackerPage() {
         <div className="flex items-center justify-between mb-3">
           <div>
             <div className="text-[15px] font-semibold text-ce-navy">SES workflows</div>
-            <div className="text-[12px] text-ce-muted mt-0.5">Tracking starts from SES form submission</div>
+            <div className="text-[12px] text-ce-muted mt-0.5">
+              {selectedMonth === 'all' ? 'All tracked workflows' : `Submitted in ${monthLabel}`}
+            </div>
           </div>
           <div className="flex gap-2">
             <div className="relative">
@@ -136,14 +187,15 @@ export default function TrackerPage() {
   );
 }
 
-function StatCard({ label, value, unit, valueColor }: { label: string; value: string; unit?: string; valueColor?: string }) {
+function StatCard({ label, value, unit, hint }: { label: string; value: string; unit?: string; hint?: string }) {
   return (
     <div className="bg-ce-bg rounded-lg px-3.5 py-3">
       <div className="text-[11px] font-semibold text-ce-muted uppercase tracking-[0.5px]">{label}</div>
       <div className="mt-1 leading-none">
-        <span className="text-[23px] font-semibold text-ce-navy" style={valueColor ? { color: valueColor } : undefined}>{value}</span>
+        <span className="text-[23px] font-semibold text-ce-navy">{value}</span>
         {unit && <span className="text-[12px] text-ce-muted font-normal ml-1">{unit}</span>}
       </div>
+      {hint && <div className="text-[11px] text-ce-hint mt-1">{hint}</div>}
     </div>
   );
 }

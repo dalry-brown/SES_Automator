@@ -2,7 +2,7 @@ const pool = require('../pool');
 const { camelize, camelizeRow } = require('../camelize');
 
 async function listTrackerRecords(query = {}) {
-  const { contractHolder, vendor, status, dateFrom, dateTo } = query;
+  const { contractHolder, vendor, status, dateFrom, dateTo, submittedFrom, submittedTo } = query;
 
   const conditions = ['1=1'];
   const params = [];
@@ -27,6 +27,14 @@ async function listTrackerRecords(query = {}) {
   if (dateTo) {
     conditions.push(`t.received_at <= $${i++}`);
     params.push(dateTo);
+  }
+  if (submittedFrom) {
+    conditions.push(`t.submitted_at >= $${i++}`);
+    params.push(submittedFrom);
+  }
+  if (submittedTo) {
+    conditions.push(`t.submitted_at < $${i++}`);
+    params.push(submittedTo);
   }
 
   // Only workflows where the SES form has been submitted; exclude raw inbox and Others

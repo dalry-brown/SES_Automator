@@ -7,7 +7,7 @@ function daysBetween(dateA, dateB) {
 }
 
 async function getTrackerStats(query = {}) {
-  const { contractHolder, vendor, dateFrom, dateTo } = query;
+  const { contractHolder, vendor, dateFrom, dateTo, submittedFrom, submittedTo } = query;
 
   const conditions = ["t.submitted_at IS NOT NULL", "w.status NOT IN ('received', 'other')"];
   const params = [];
@@ -28,6 +28,14 @@ async function getTrackerStats(query = {}) {
   if (dateTo) {
     conditions.push(`t.received_at <= $${i++}`);
     params.push(dateTo);
+  }
+  if (submittedFrom) {
+    conditions.push(`t.submitted_at >= $${i++}`);
+    params.push(submittedFrom);
+  }
+  if (submittedTo) {
+    conditions.push(`t.submitted_at < $${i++}`);
+    params.push(submittedTo);
   }
 
   const where = conditions.join(' AND ');
