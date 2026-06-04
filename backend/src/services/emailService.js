@@ -6,7 +6,23 @@ const { generateWfId } = require('./workflowService');
 const { emit } = require('./sseService');
 const pool = require('../db/pool');
 
+// Prevent concurrent ingestion of the same message (Graph can fire duplicate webhook notifications)
+const _inProgressMessageIds = new Set();
+
 async function ingestEmail(messageId) {
+  if (_inProgressMessageIds.has(messageId)) {
+    console.log(`[EmailService] Skipping duplicate in-flight notification for messageId: ${messageId}`);
+    return null;
+  }
+  _inProgressMessageIds.add(messageId);
+  try {
+    return await _ingestEmailInner(messageId);
+  } finally {
+    _inProgressMessageIds.delete(messageId);
+  }
+}
+
+async function _ingestEmailInner(messageId) {
   console.log(`[EmailService] Ingesting messageId: ${messageId}`);
 
   const email = await fetchEmail(messageId);
@@ -75,7 +91,9 @@ async function ingestEmail(messageId) {
   }
 
   // ── Thread message ────────────────────────────────────────────────────────
-  await appendThreadMessage(workflowId, {
+  // appendThreadMessage returns null if message_id already exists (ON CONFLICT DO NOTHING).
+  // If null, a prior call already processed this message — skip attachments entirely.
+  const insertedMessage = await appendThreadMessage(workflowId, {
     messageId,
     conversationId,
     senderEmail,
@@ -90,17 +108,15 @@ async function ingestEmail(messageId) {
     isOutbound:   false,
   });
 
+  if (!insertedMessage) {
+    console.log(`[EmailService] messageId ${messageId} already stored — skipping attachments`);
+    return workflowId;
+  }
+
   // ── Attachments ───────────────────────────────────────────────────────────
   const attachmentList = await fetchAttachmentList(messageId);
   for (const att of attachmentList) {
     if (att['@odata.type'] !== '#microsoft.graph.fileAttachment') continue;
-
-    // Avoid duplicates if the same message is ingested more than once
-    const { rows: existing } = await pool.query(
-      `SELECT id FROM attachments WHERE workflow_id = $1 AND file_name = $2 AND source = 'email' LIMIT 1`,
-      [workflowId, att.name]
-    );
-    if (existing.length) continue;
 
     const { name, contentType, buffer } = await downloadAttachment(messageId, att.id);
     const { storageKey } = await save(buffer, name, workflowId);
