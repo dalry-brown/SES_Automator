@@ -7,6 +7,7 @@ const { camelizeRow, camelize } = require('../db/camelize');
 const { read, save } = require('./storageService');
 const { insertAttachment } = require('../db/queries/attachments');
 const { sendReplyAll, sendCustomReply, sendDirectEmail, sendEmail } = require('../graph/mail');
+const { createNotification } = require('./notificationService');
 const { emit } = require('./sseService');
 
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
@@ -31,7 +32,7 @@ async function getWorkflowOrThrow(workflowId) {
 
 async function getSubmitterEmail(workflowId) {
   const { rows } = await pool.query(
-    `SELECT u.email, u.name
+    `SELECT u.id, u.email, u.name
      FROM approval_events ae
      JOIN users u ON u.id = ae.user_id
      WHERE ae.workflow_id = $1 AND ae.type = 'submitted'
@@ -247,18 +248,16 @@ async function signWorkflow(workflowId, user, body) {
 
   emit('workflow.updated', { workflowId });
 
-  // Fire-and-forget: notify CE without blocking the HTTP response
+  // Fire-and-forget: notify CE submitter via in-app notification
   getSubmitterEmail(workflowId).then((submitter) => {
     if (!submitter) return;
-    return sendDirectEmail(
-      submitter.email,
-      `[SES Automator] Workflow ${workflowId} Approved`,
-      `<p>Hi ${submitter.name},</p>
-       <p>Workflow <strong>${workflowId}</strong> has been <strong>approved</strong> by ${user.name}.</p>
-       <p>Please do a final review and then send it to the vendor when ready.</p>
-       <p><a href="${approvalLink(workflowId)}">View workflow</a></p>`
+    return createNotification(
+      submitter.id,
+      `Workflow ${workflowId} Approved`,
+      `${user.name} has approved your SES. Please do a final review and send it to the vendor when ready.`,
+      `/workflows/${workflowId}/approval`
     );
-  }).catch((e) => console.error('[ApprovalService] CE notification failed:', e.message));
+  }).catch((e) => console.error('[ApprovalService] Approval notification failed:', e.message));
 
   return { message: 'Workflow approved', workflowId, docHash };
 }
@@ -341,16 +340,15 @@ async function returnWorkflow(workflowId, user, comment) {
 
     emit('workflow.updated', { workflowId });
 
-    // Fire-and-forget: notify CE submitter without blocking the HTTP response
+    // Fire-and-forget: notify CE submitter via in-app notification
     getSubmitterEmail(workflowId).then((submitter) => {
       if (!submitter) return;
-      const replyBody = `
-        <p>Hi ${submitter.name},</p>
-        <p>Contract holder <strong>${user.name}</strong> has returned workflow <strong>${workflowId}</strong> for corrections.</p>
-        <blockquote style="border-left:3px solid #e44;padding-left:12px;color:#555">${comment}</blockquote>
-        <p>Please update the form and resubmit for approval.</p>
-        <p><a href="${FRONTEND_URL}/workflows/${workflowId}">Edit workflow</a></p>`;
-      return sendDirectEmail(submitter.email, `[SES Automator] Workflow ${workflowId} Returned for Corrections`, replyBody);
+      return createNotification(
+        submitter.id,
+        `Workflow ${workflowId} Returned for Corrections`,
+        `${user.name} returned this workflow: "${comment}"`,
+        `/workflows/${workflowId}`
+      );
     }).catch((e) => console.error('[ApprovalService] Return notification failed:', e.message));
 
     return camelizeRow(rows[0]);

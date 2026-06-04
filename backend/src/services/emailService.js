@@ -14,6 +14,14 @@ async function ingestEmail(messageId) {
   const senderEmail = from?.emailAddress?.address;
   const senderName  = from?.emailAddress?.name;
 
+  // Skip emails sent FROM the monitored account itself — these are system
+  // notification emails (approval alerts, etc.) not vendor messages.
+  const monitoredAddress = (process.env.USER_EMAIL || '').toLowerCase();
+  if (monitoredAddress && senderEmail?.toLowerCase() === monitoredAddress) {
+    console.log(`[EmailService] Skipping self-sent email (from monitored account): ${subject}`);
+    return null;
+  }
+
   const invoiceNumber = _parseInvoiceNumber(subject);
   const supplierName  = senderName;
   const receivedAt    = new Date(receivedDateTime);

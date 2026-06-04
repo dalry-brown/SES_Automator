@@ -16,7 +16,10 @@
       "Bash(Get-Content \"C:\\\\Users\\\\HP\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-HP-SES-Automator\\\\4508cc3d-5eb6-4b1e-bf22-5c8a707949ce\\\\tasks\\\\bw88bupxw.output\")",
       "PowerShell(Get-Process | Where-Object { $_.ProcessName -eq 'node' } | Select-Object Id, ProcessName, CPU)",
       "PowerShell(Get-Process -Name \"node\" -ErrorAction SilentlyContinue)",
-      "PowerShell(Stop-Process -Force)"
+      "PowerShell(Stop-Process -Force)",
+      "Bash(git commit -m ' *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\HP\\\\SES_Automator\\\\frontend\" -Recurse -Directory)",
+      "Bash(gh run *)"
     ]
   }
 }

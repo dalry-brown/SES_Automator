@@ -296,6 +296,16 @@ export interface LockResult {
   lockedBy?: string;
 }
 
+// ── Notifications ─────────────────────────────────────────────────────────────
+export interface AppNotification {
+  id: number;
+  title: string;
+  body: string;
+  link: string | null;
+  isRead: boolean;
+  createdAt: string;
+}
+
 // ── UI helpers ────────────────────────────────────────────────────────────────
 export type ViewMode = 'editor' | 'contract-holder';
 

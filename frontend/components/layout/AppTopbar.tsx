@@ -3,7 +3,8 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { Bell, Eye, UserCog, LogOut } from 'lucide-react';
+import { Eye, UserCog, LogOut } from 'lucide-react';
+import { NotificationBell } from '@/components/ui/NotificationBell';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { useWorkflows } from '@/lib/hooks/useWorkflows';
@@ -95,9 +96,7 @@ export function AppTopbar() {
 
       {/* Right side */}
       <div className="flex items-center gap-2.5 flex-shrink-0 ml-4">
-        <button className="text-white/65 p-1.5 rounded-md hover:bg-white/10 hover:text-white transition-all">
-          <Bell size={18} />
-        </button>
+        <NotificationBell />
 
         <div className="relative">
           <button

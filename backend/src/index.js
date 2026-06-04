@@ -28,6 +28,7 @@ const othersRoutes = require('./routes/others');
 const suggestionRoutes = require('./routes/suggestions');
 const sesDocumentRoutes = require('./routes/sesDocuments');
 const eventsRoutes = require('./routes/events');
+const notificationRoutes = require('./routes/notifications');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -71,6 +72,7 @@ app.use('/api/others', othersRoutes);
 app.use('/api/suggestions', suggestionRoutes);
 app.use('/api/ses-documents', sesDocumentRoutes);
 app.use('/api/events', eventsRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 // ── Error handler ─────────────────────────────────────────────────────────────
 app.use(errorHandler);
@@ -113,6 +115,18 @@ async function start() {
         updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `).catch((err) => console.warn('[Boot] msal_token_cache table check failed:', err.message));
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS notifications (
+        id         SERIAL PRIMARY KEY,
+        user_id    INTEGER NOT NULL,
+        title      TEXT NOT NULL,
+        body       TEXT NOT NULL,
+        link       TEXT,
+        is_read    BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `).catch((err) => console.warn('[Boot] notifications table check failed:', err.message));
 
     startLockCleanupJob();
     startTrackerSyncJob();

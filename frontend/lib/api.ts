@@ -148,6 +148,15 @@ export const sesDocumentsApi = {
   },
 };
 
+// ── Notifications ─────────────────────────────────────────────────────────────
+import type { AppNotification } from '@/types';
+export const notificationsApi = {
+  list:       () => apiFetch<{ notifications: AppNotification[] }>('/api/notifications'),
+  markRead:   (id: number) => apiFetch<{ ok: boolean }>(`/api/notifications/${id}/read`, { method: 'PATCH' }),
+  markAllRead: () => apiFetch<{ ok: boolean }>('/api/notifications/read-all', { method: 'PATCH' }),
+  dismiss:    (id: number) => apiFetch<{ ok: boolean }>(`/api/notifications/${id}`, { method: 'DELETE' }),
+};
+
 // ── Suggestions (field autocomplete) ─────────────────────────────────────────
 export const suggestionsApi = {
   search: (field: string, q: string) =>
