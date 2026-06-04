@@ -163,11 +163,18 @@ export default function ApprovalPage() {
   const searchParams = useSearchParams();
   const { effectiveRole, user } = useAuth();
   const isChView = effectiveRole === 'user';
+  const isEditor = user?.role === 'editor';
 
   const { data, isLoading, error, refetch } = useApprovalData(id);
   const [activeDocIdx, setActiveDocIdx]     = useState(0);
   const [decisions, setDecisions]           = useState<Map<number, DocDecision>>(new Map());
   const [pdfRefreshKey, setPdfRefreshKey]   = useState(0);
+
+  // Editors cannot access the approval page — redirect to home
+  if (isEditor) {
+    router.replace('/home');
+    return <PageSpinner />;
+  }
 
   if (isLoading) return <PageSpinner />;
 

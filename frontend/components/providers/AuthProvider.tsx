@@ -59,7 +59,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               setUser(decoded);
               if (decoded.role === 'user') setViewMode('contract-holder');
               setIsLoading(false);
-              router.replace('/home');
+              router.replace(decoded.role === 'user' ? '/pending-approval' : '/home');
               return;
             }
           }

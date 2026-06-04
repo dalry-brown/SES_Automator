@@ -9,15 +9,17 @@ import { Spinner } from '@/components/ui/Spinner';
 import { useToast } from '@/components/ui/Toast';
 
 export default function LoginPage() {
-  const { isAuthenticated, isLoading: authLoading } = useAuth();
+  const { isAuthenticated, isLoading: authLoading, user } = useAuth();
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const { error: toastError } = useToast();
 
-  // If AuthProvider is finishing an MSAL redirect, or user is already logged in, redirect to home.
+  // Already logged in — send CHs to their pending-approval queue, others to home
   useEffect(() => {
-    if (!authLoading && isAuthenticated) router.replace('/home');
-  }, [authLoading, isAuthenticated, router]);
+    if (!authLoading && isAuthenticated) {
+      router.replace(user?.role === 'user' ? '/pending-approval' : '/home');
+    }
+  }, [authLoading, isAuthenticated, user, router]);
 
   if (authLoading || isAuthenticated) {
     return (

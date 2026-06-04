@@ -16,7 +16,7 @@ import type { WorkflowStatus } from '@/types';
 
 // ── Statuses where the form must be read-only ─────────────────────────────────
 const READ_ONLY_STATUSES: WorkflowStatus[] = [
-  'pending_approval', 'queried', 'approved', 'sent', 'closed', 'cancelled',
+  'pending_approval', 'approved', 'sent', 'closed', 'cancelled',
 ];
 
 // ── Status banners shown above the form when it cannot be edited ───────────────
