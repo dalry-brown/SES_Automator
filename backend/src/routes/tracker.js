@@ -14,6 +14,17 @@ router.get('/', [authenticate, requireRole('editor')], async (req, res, next) =>
   }
 });
 
+// GET /api/tracker/monthly-count — SES forms submitted in the current calendar month
+router.get('/monthly-count', [authenticate, requireRole('editor')], async (req, res, next) => {
+  try {
+    const { getMonthlyTrackedCount } = require('../db/queries/tracker');
+    const count = await getMonthlyTrackedCount();
+    res.json({ count });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/tracker/stats — duration analytics
 router.get('/stats', [authenticate, requireRole('editor')], async (req, res, next) => {
   try {

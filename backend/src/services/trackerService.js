@@ -9,7 +9,7 @@ function daysBetween(dateA, dateB) {
 async function getTrackerStats(query = {}) {
   const { contractHolder, vendor, dateFrom, dateTo } = query;
 
-  const conditions = ['t.submitted_at IS NOT NULL'];
+  const conditions = ["t.submitted_at IS NOT NULL", "w.status NOT IN ('received', 'other')"];
   const params = [];
   let i = 1;
 

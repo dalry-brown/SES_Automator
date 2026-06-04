@@ -222,8 +222,9 @@ export const approvalApi = {
 
 // ── Tracker ───────────────────────────────────────────────────────────────────
 export const trackerApi = {
-  list:  (params?: Record<string, string>) => apiFetch<{ records: TrackerRecord[] }>(`/api/tracker${params ? '?' + new URLSearchParams(params) : ''}`),
-  stats: (params?: Record<string, string>) => apiFetch<{ stats: TrackerStats }>(`/api/tracker/stats${params ? '?' + new URLSearchParams(params) : ''}`),
+  list:         (params?: Record<string, string>) => apiFetch<{ records: TrackerRecord[] }>(`/api/tracker${params ? '?' + new URLSearchParams(params) : ''}`),
+  stats:        (params?: Record<string, string>) => apiFetch<{ stats: TrackerStats }>(`/api/tracker/stats${params ? '?' + new URLSearchParams(params) : ''}`),
+  monthlyCount: () => apiFetch<{ count: number }>('/api/tracker/monthly-count'),
 };
 
 // ── Others (manual items) ─────────────────────────────────────────────────────

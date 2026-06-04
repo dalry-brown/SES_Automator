@@ -29,8 +29,9 @@ async function listTrackerRecords(query = {}) {
     params.push(dateTo);
   }
 
-  // Only workflows where the SES form has been submitted for approval
+  // Only workflows where the SES form has been submitted; exclude raw inbox and Others
   conditions.push('t.submitted_at IS NOT NULL');
+  conditions.push("w.status NOT IN ('received', 'other')");
 
   const { rows } = await pool.query(
     `SELECT
@@ -86,4 +87,16 @@ async function upsertTrackerRow({ workflowId, receivedAt, submittedAt, approvedA
   return camelizeRow(rows[0]);
 }
 
-module.exports = { listTrackerRecords, getTrackerRow, upsertTrackerRow };
+async function getMonthlyTrackedCount() {
+  const { rows } = await pool.query(
+    `SELECT COUNT(*) AS count
+     FROM tracker t
+     JOIN workflows w ON w.id = t.workflow_id
+     WHERE t.submitted_at >= date_trunc('month', NOW())
+       AND t.submitted_at <  date_trunc('month', NOW()) + INTERVAL '1 month'
+       AND w.status NOT IN ('received', 'other')`
+  );
+  return parseInt(rows[0].count, 10);
+}
+
+module.exports = { listTrackerRecords, getTrackerRow, upsertTrackerRow, getMonthlyTrackedCount };

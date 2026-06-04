@@ -4,7 +4,7 @@ import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { Search, BarChart2, FileText, ExternalLink, Mail, Pencil, BookOpen, MessageSquare } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
-import { attachmentsApi, othersApi, workflowsApi } from '@/lib/api';
+import { attachmentsApi, othersApi, workflowsApi, trackerApi } from '@/lib/api';
 import { useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/components/ui/Toast';
 import { useWorkflows } from '@/lib/hooks/useWorkflows';
@@ -108,10 +108,13 @@ export default function HomePage() {
   const approvedCount = wfs.filter((w) => w.status === 'approved').length;
   const sentCount     = wfs.filter((w) => w.status === 'sent' || w.status === 'closed').length;
 
-  const now        = new Date();
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  const monthCount = wfs.filter((w) => new Date(w.createdAt) >= monthStart).length;
-  const monthLabel = now.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+  const { data: monthlyData } = useQuery({
+    queryKey: ['tracker', 'monthly-count'],
+    queryFn:  trackerApi.monthlyCount,
+    staleTime: 60_000,
+  });
+  const monthCount = monthlyData?.count ?? 0;
+  const monthLabel = new Date().toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
 
   const groups = useMemo(() => {
     let list = wfs;
