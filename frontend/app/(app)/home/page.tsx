@@ -107,7 +107,11 @@ export default function HomePage() {
   const approvalCount = wfs.filter((w) => w.status === 'pending_approval').length;
   const approvedCount = wfs.filter((w) => w.status === 'approved').length;
   const sentCount     = wfs.filter((w) => w.status === 'sent' || w.status === 'closed').length;
-  const totalCount    = wfs.length;
+
+  const now        = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const monthCount = wfs.filter((w) => new Date(w.createdAt) >= monthStart).length;
+  const monthLabel = now.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
 
   const groups = useMemo(() => {
     let list = wfs;
@@ -184,14 +188,19 @@ export default function HomePage() {
         <StatHero label="Approved"         count={approvedCount} dot="#10b981" onClick={() => router.push('/approved')} />
         <StatHero label="Sent / Closed"    count={sentCount}     dot="#9ca3af" onClick={() => router.push('/archive')} />
         <div
-          className="flex-1 min-w-[100px] bg-ce-navy rounded-xl px-3.5 py-3 cursor-pointer hover:bg-ce-navy2 transition-colors"
+          className="flex-1 min-w-[100px] bg-ce-navy rounded-xl px-3.5 py-3 cursor-pointer hover:bg-ce-navy2 transition-colors group"
           onClick={() => router.push('/tracker')}
         >
-          <div className="text-[11px] text-white/60 font-medium flex items-center gap-1">
-            <BarChart2 size={11} /> Tracker
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[11px] text-white/60 font-medium flex items-center gap-1">
+              <BarChart2 size={11} /> Tracker
+            </span>
+            <span className="text-[9.5px] font-semibold text-white/55 bg-white/10 rounded-md px-1.5 py-0.5 leading-none group-hover:bg-white/15 transition-colors">
+              {monthLabel}
+            </span>
           </div>
-          <div className="text-[26px] font-bold text-white leading-none mt-0.5">{totalCount}</div>
-          <div className="text-[11px] text-white/40 mt-0.5">view all →</div>
+          <div className="text-[26px] font-bold text-white leading-none">{monthCount}</div>
+          <div className="text-[11px] text-white/40 mt-0.5">SES this month · view all →</div>
         </div>
       </div>
 
