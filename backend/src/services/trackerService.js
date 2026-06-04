@@ -1,4 +1,5 @@
 const pool = require('../db/pool');
+const { camelizeRow, camelize } = require('../db/camelize');
 
 function daysBetween(dateA, dateB) {
   const a = dateA instanceof Date ? dateA : new Date(dateA);
@@ -94,7 +95,11 @@ async function getTrackerStats(query = {}) {
     params
   );
 
-  return { summary: summary[0], byContractHolder: byHolder, byVendor };
+  return {
+    summary:           summary[0] ? camelizeRow(summary[0]) : {},
+    byContractHolder:  camelize(byHolder),
+    byVendor:          camelize(byVendor),
+  };
 }
 
 module.exports = { daysBetween, getTrackerStats };
