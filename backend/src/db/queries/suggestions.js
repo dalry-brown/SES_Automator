@@ -38,6 +38,38 @@ async function searchSuggestions(fieldName, query) {
 
 async function upsertSuggestion(fieldName, value, linkedField = null, linkedValue = null) {
   await ensureTable();
+
+  // For contractHolderName, accumulate all seen emails as a JSON array
+  // so the frontend can offer a "which email?" picker when there are multiple.
+  if (fieldName === 'contractHolderName' && linkedField === 'contractHolderEmail' && linkedValue) {
+    const { rows } = await pool.query(
+      `SELECT linked_value FROM field_suggestions WHERE field_name = $1 AND value = $2`,
+      [fieldName, value]
+    );
+    let emails = [];
+    if (rows.length && rows[0].linked_value) {
+      try {
+        const parsed = JSON.parse(rows[0].linked_value);
+        emails = Array.isArray(parsed) ? parsed : [rows[0].linked_value];
+      } catch {
+        emails = [rows[0].linked_value];
+      }
+    }
+    if (!emails.includes(linkedValue)) emails.push(linkedValue);
+
+    await pool.query(
+      `INSERT INTO field_suggestions (field_name, value, linked_field, linked_value)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (field_name, value) DO UPDATE
+       SET used_count  = field_suggestions.used_count + 1,
+           linked_field = $3,
+           linked_value = $4,
+           updated_at   = NOW()`,
+      [fieldName, value, linkedField, JSON.stringify(emails)]
+    );
+    return;
+  }
+
   await pool.query(
     `INSERT INTO field_suggestions (field_name, value, linked_field, linked_value)
      VALUES ($1, $2, $3, $4)
