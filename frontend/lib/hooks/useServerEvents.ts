@@ -38,6 +38,10 @@ export function useServerEvents() {
       } catch (_) {}
     });
 
+    es.addEventListener('notifications.updated', () => {
+      qc.invalidateQueries({ queryKey: ['notifications'] });
+    });
+
     return () => es.close();
   }, [qc]);
 }

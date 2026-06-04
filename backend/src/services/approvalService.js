@@ -31,6 +31,7 @@ async function getWorkflowOrThrow(workflowId) {
 }
 
 async function getSubmitterEmail(workflowId) {
+  // Prefer the explicit 'submitted' approval event (recorded since recent deploy)
   const { rows } = await pool.query(
     `SELECT u.id, u.email, u.name
      FROM approval_events ae
@@ -40,7 +41,18 @@ async function getSubmitterEmail(workflowId) {
      LIMIT 1`,
     [workflowId]
   );
-  return rows[0] || null;
+  if (rows[0]) return rows[0];
+
+  // Fallback: use ses_forms.created_by — works for all workflows regardless of age
+  const { rows: fallback } = await pool.query(
+    `SELECT u.id, u.email, u.name
+     FROM ses_forms sf
+     JOIN users u ON u.id = sf.created_by
+     WHERE sf.workflow_id = $1
+     LIMIT 1`,
+    [workflowId]
+  );
+  return fallback[0] || null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -249,14 +261,18 @@ async function signWorkflow(workflowId, user, body) {
   emit('workflow.updated', { workflowId });
 
   // Fire-and-forget: notify CE submitter via in-app notification
-  getSubmitterEmail(workflowId).then((submitter) => {
-    if (!submitter) return;
-    return createNotification(
+  getSubmitterEmail(workflowId).then(async (submitter) => {
+    if (!submitter) {
+      console.warn('[ApprovalService] No submitter found for workflow', workflowId, '— skipping notification');
+      return;
+    }
+    await createNotification(
       submitter.id,
       `Workflow ${workflowId} Approved`,
       `${user.name} has approved your SES. Please do a final review and send it to the vendor when ready.`,
       `/workflows/${workflowId}/approval`
     );
+    emit('notifications.updated', { userId: submitter.id });
   }).catch((e) => console.error('[ApprovalService] Approval notification failed:', e.message));
 
   return { message: 'Workflow approved', workflowId, docHash };
@@ -341,14 +357,18 @@ async function returnWorkflow(workflowId, user, comment) {
     emit('workflow.updated', { workflowId });
 
     // Fire-and-forget: notify CE submitter via in-app notification
-    getSubmitterEmail(workflowId).then((submitter) => {
-      if (!submitter) return;
-      return createNotification(
+    getSubmitterEmail(workflowId).then(async (submitter) => {
+      if (!submitter) {
+        console.warn('[ApprovalService] No submitter found for workflow', workflowId, '— skipping notification');
+        return;
+      }
+      await createNotification(
         submitter.id,
         `Workflow ${workflowId} Returned for Corrections`,
         `${user.name} returned this workflow: "${comment}"`,
         `/workflows/${workflowId}`
       );
+      emit('notifications.updated', { userId: submitter.id });
     }).catch((e) => console.error('[ApprovalService] Return notification failed:', e.message));
 
     return camelizeRow(rows[0]);
