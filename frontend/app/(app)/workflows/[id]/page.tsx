@@ -16,7 +16,7 @@ import type { WorkflowStatus } from '@/types';
 
 // ── Statuses where the form must be read-only ─────────────────────────────────
 const READ_ONLY_STATUSES: WorkflowStatus[] = [
-  'pending_approval', 'approved', 'sent', 'closed', 'cancelled',
+  'approved', 'sent', 'closed', 'cancelled',
 ];
 
 // ── Status banners shown above the form when it cannot be edited ───────────────
@@ -34,7 +34,7 @@ const STATUS_BANNER: Partial<Record<WorkflowStatus, {
   queried: {
     icon: AlertCircle,
     bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-800', sub: 'text-amber-600',
-    actionLabel: 'View query details →',
+    actionLabel: 'View query →',
     actionHref: (id) => `/workflows/${id}/approval`,
   },
   returned: {
@@ -68,15 +68,15 @@ const STATUS_BANNER: Partial<Record<WorkflowStatus, {
 const STATUS_MESSAGES: Partial<Record<WorkflowStatus, { title: string; subtitle: string }>> = {
   pending_approval: {
     title:    'Awaiting approval',
-    subtitle: 'This form has been submitted and is read-only while the contract holder reviews it.',
+    subtitle: 'This form has been submitted for approval. You can still edit and resubmit if needed.',
   },
   queried: {
     title:    'Query raised by contract holder',
-    subtitle: 'The contract holder has raised a query. The form is read-only until they approve or return it.',
+    subtitle: 'The contract holder has raised a query. Edit the form below and resubmit, or reply directly to their query.',
   },
   returned: {
     title:    'Returned for corrections',
-    subtitle: 'The contract holder has returned this form. You can edit it below, then resubmit for approval.',
+    subtitle: 'The contract holder returned this form. Edit it below, then resubmit for approval.',
   },
   approved: {
     title:    'Approved',

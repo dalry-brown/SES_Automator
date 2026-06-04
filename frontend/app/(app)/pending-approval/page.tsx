@@ -428,10 +428,10 @@ function EditorSidePanel({ workflow }: { workflow: Workflow }) {
               </>
             ) : workflow.status === 'queried' ? (
               <button
-                onClick={() => router.push(`/workflows/${workflow.id}/approval?from=/pending-approval`)}
-                className="w-full bg-ce-navy text-white text-[13px] font-medium py-2 rounded-lg hover:bg-ce-navy2 transition-colors flex items-center justify-center gap-1.5"
+                onClick={() => router.push(`/workflows/${workflow.id}?from=/pending-approval`)}
+                className="w-full bg-ce-navy text-white text-[13px] font-semibold py-2.5 rounded-lg hover:bg-ce-navy2 transition-colors flex items-center justify-center gap-2"
               >
-                <ChevronRight size={13} /> View approval page
+                <Edit size={14} /> Edit SES form
               </button>
             ) : (
               <>
