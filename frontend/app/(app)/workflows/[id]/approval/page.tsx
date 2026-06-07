@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { ArrowLeft, FileText, ExternalLink, CheckCircle, AlertCircle, XCircle, SkipForward, Send } from 'lucide-react';
 import { PageSpinner } from '@/components/ui/Spinner';
@@ -9,7 +9,7 @@ import { AuditTrail } from '@/components/approval/AuditTrail';
 import { SignaturePanel } from '@/components/approval/SignaturePanel';
 import { useApprovalData } from '@/lib/hooks/useApproval';
 import { useAuth } from '@/components/providers/AuthProvider';
-import { documentsApi, sesDocumentsApi } from '@/lib/api';
+import { documentsApi, sesDocumentsApi, workflowsApi } from '@/lib/api';
 import { formatCurrency, formatDate, cn, inferBackHref } from '@/lib/utils';
 import type { SesDocument } from '@/types';
 
@@ -163,18 +163,19 @@ export default function ApprovalPage() {
   const searchParams = useSearchParams();
   const { effectiveRole, user } = useAuth();
   const isChView = effectiveRole === 'user';
-  const isEditor = user?.role === 'editor';
 
   const { data, isLoading, error, refetch } = useApprovalData(id);
   const [activeDocIdx, setActiveDocIdx]     = useState(0);
   const [decisions, setDecisions]           = useState<Map<number, DocDecision>>(new Map());
   const [pdfRefreshKey, setPdfRefreshKey]   = useState(0);
+  const hasMarkedRead = useRef(false);
 
-  // Editors cannot access the approval page — redirect to home
-  if (isEditor) {
-    router.replace('/home');
-    return <PageSpinner />;
-  }
+  // Auto-mark thread messages as read when the approval page is opened
+  useEffect(() => {
+    if (!id || hasMarkedRead.current) return;
+    hasMarkedRead.current = true;
+    workflowsApi.markRead(id).catch(() => {});
+  }, [id]);
 
   if (isLoading) return <PageSpinner />;
 
@@ -188,8 +189,14 @@ export default function ApprovalPage() {
 
   const { workflow, mergedDoc, sesDocuments, events } = data;
 
-  // Only the exact assigned CH can make document decisions and sign
-  const isAssignedCH = user?.role === 'user' && workflow.contractHolderEmail === user?.email;
+  // Email match is the only criterion — any role can sign/act if they are the assigned CH
+  const isAssignedCH = !!workflow.contractHolderEmail && workflow.contractHolderEmail === user?.email;
+
+  // Editors who are NOT the assigned CH have no business on this page
+  if (user?.role === 'editor' && !isAssignedCH) {
+    router.replace('/home');
+    return <PageSpinner />;
+  }
 
   // ── Per-document decision logic ────────────────────────────────────────────
   const hasSesDocuments = sesDocuments && sesDocuments.length > 0;
