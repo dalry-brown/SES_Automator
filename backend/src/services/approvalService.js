@@ -193,9 +193,9 @@ async function signWorkflow(workflowId, user, body) {
     x: SIG_BLOCK_X - 8, y: certY - 6,
     width:  SIG_BLOCK_W + 8,
     height: certBlockH,
-    borderColor: rgb(0.2, 0.2, 0.6),
+    borderColor: rgb(0.2, 0.2, 0.2),
     borderWidth: 1,
-    color: rgb(0.96, 0.97, 1),
+    color: rgb(0.93, 0.93, 0.93),
   });
   CERT_LINES.forEach((line, i) => {
     firstPage.drawText(line, {
@@ -203,7 +203,7 @@ async function signWorkflow(workflowId, user, body) {
       y:    certY + certBlockH - LINE_H * (i + 1),
       size: i === 0 ? 8.5 : 7.5,
       font: i === 0 ? font : fontReg,
-      color: i === 0 ? rgb(0.1, 0.1, 0.55) : rgb(0.1, 0.1, 0.1),
+      color: i === 0 ? rgb(0.12, 0.12, 0.12) : rgb(0.28, 0.28, 0.28),
     });
   });
 
@@ -297,6 +297,7 @@ async function queryWorkflow(workflowId, user, comment) {
   }
 
   const client = await pool.connect();
+  let savedRow;
   try {
     await client.query('BEGIN');
     await client.query(
@@ -309,15 +310,29 @@ async function queryWorkflow(workflowId, user, comment) {
       [workflowId, user.userId, comment]
     );
     await client.query('COMMIT');
-
-    emit('workflow.updated', { workflowId });
-    return camelizeRow(rows[0]);
+    savedRow = rows[0];
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
   } finally {
     client.release();
   }
+
+  emit('workflow.updated', { workflowId });
+
+  // Fire-and-forget: notify CE submitter that a query was raised
+  getSubmitterEmail(workflowId).then(async (submitter) => {
+    if (!submitter) return;
+    await createNotification(
+      submitter.id,
+      `Query Raised — Workflow ${workflowId}`,
+      `${user.name} raised a query: "${comment}"`,
+      `/workflows/${workflowId}/approval`
+    );
+    emit('notifications.updated', { userId: submitter.id });
+  }).catch((e) => console.error('[ApprovalService] Query notification failed:', e.message));
+
+  return camelizeRow(savedRow);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -433,6 +448,18 @@ async function rerouteWorkflow(workflowId, user, { email, name }) {
     await client.query('COMMIT');
 
     emit('workflow.updated', { workflowId });
+
+    // Fire-and-forget: in-app notification to new CH if they have an account
+    pool.query('SELECT id FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1', [email]).then(async ({ rows: uRows }) => {
+      if (!uRows[0]) return;
+      await createNotification(
+        uRows[0].id,
+        `Approval Required — Workflow ${workflowId}`,
+        `${user.name} has assigned you to approve workflow ${workflowId}.`,
+        `/workflows/${workflowId}/approval`
+      );
+      emit('notifications.updated', { userId: uRows[0].id });
+    }).catch((e) => console.error('[ApprovalService] Re-route in-app notification failed:', e.message));
 
     // Fire-and-forget: email new contract holder without blocking the HTTP response
     sendDirectEmail(

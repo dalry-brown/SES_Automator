@@ -4,6 +4,7 @@ const { insertAttachment } = require('../db/queries/attachments');
 const { findWorkflowByConversationId, appendThreadMessage } = require('./threadService');
 const { generateWfId } = require('./workflowService');
 const { emit } = require('./sseService');
+const { createNotification } = require('./notificationService');
 const pool = require('../db/pool');
 
 // Prevent concurrent ingestion of the same message (Graph can fire duplicate webhook notifications)
@@ -52,9 +53,33 @@ async function _ingestEmailInner(messageId) {
     isNewMessage = true; // vendor reply on an existing thread
     console.log(`[EmailService] Thread match → workflow ${workflowId}`);
 
-    // Status is intentionally NOT changed on vendor replies — only the first
-    // inbound email sets the workflow to 'received'. Subsequent replies thread
-    // into the existing workflow without affecting its status.
+    // Notify the CE submitter of the vendor reply (fire-and-forget)
+    pool.query(
+      `SELECT u.id, u.name
+       FROM approval_events ae
+       JOIN users u ON u.id = ae.user_id
+       WHERE ae.workflow_id = $1 AND ae.type = 'submitted'
+       ORDER BY ae.created_at DESC LIMIT 1`,
+      [workflowId]
+    ).then(async ({ rows }) => {
+      let submitter = rows[0];
+      if (!submitter) {
+        // Fallback: creator of the SES form
+        const { rows: fb } = await pool.query(
+          `SELECT u.id, u.name FROM ses_forms sf JOIN users u ON u.id = sf.created_by WHERE sf.workflow_id = $1 LIMIT 1`,
+          [workflowId]
+        );
+        submitter = fb[0];
+      }
+      if (!submitter) return;
+      await createNotification(
+        submitter.id,
+        `Vendor Reply — Workflow ${workflowId}`,
+        `${senderName || senderEmail} replied to workflow ${workflowId}.`,
+        `/workflows/${workflowId}`
+      );
+      emit('notifications.updated', { userId: submitter.id });
+    }).catch((e) => console.error('[EmailService] Vendor reply notification failed:', e.message));
   } else {
     // Duplicate invoice warning (same supplier + invoice number)
     if (invoiceNumber && supplierName) {

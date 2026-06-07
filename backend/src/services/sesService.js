@@ -258,7 +258,7 @@ async function submitSES(formId, user) {
         `[SES Automator] Approval Required — ${form.workflowId}`,
         `<p>Hi ${chName},</p>
          <p>A Service Entry Sheet for workflow <strong>${form.workflowId}</strong> has been submitted and requires your approval.</p>
-         ${workflow.supplier_name || firstForm?.vendorName ? `<p><strong>Vendor:</strong> ${workflow.supplier_name || firstForm?.vendorName}</p>` : ''}
+         ${firstForm?.vendorName || workflow.supplier_name ? `<p><strong>Vendor:</strong> ${firstForm?.vendorName || workflow.supplier_name}</p>` : ''}
          <p>Please review the document and approve, query, or return it for corrections.</p>
          <p>
            <a href="${FRONTEND_URL}/workflows/${form.workflowId}/approval"
