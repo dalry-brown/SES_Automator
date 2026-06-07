@@ -30,6 +30,39 @@ async function getWorkflowOrThrow(workflowId) {
   return camelizeRow(rows[0]);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// _syncParentStatus — recompute and persist the parent's derived status.
+// Called fire-and-forget (or inline) after any child status change.
+// Rules:
+//   all children sent     → parent = sent
+//   all children ≥approved → parent = approved
+//   otherwise             → parent = pending_approval
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function _syncParentStatus(parentId) {
+  const { rows: siblings } = await pool.query(
+    'SELECT status FROM workflows WHERE parent_workflow_id = $1',
+    [parentId]
+  );
+  if (!siblings.length) return;
+
+  const statuses = siblings.map((s) => s.status);
+  let newStatus;
+  if (statuses.every((s) => s === 'sent')) {
+    newStatus = 'sent';
+  } else if (statuses.every((s) => ['approved', 'sent'].includes(s))) {
+    newStatus = 'approved';
+  } else {
+    newStatus = 'pending_approval';
+  }
+
+  await pool.query(
+    `UPDATE workflows SET status = $1, updated_at = NOW() WHERE id = $2`,
+    [newStatus, parentId]
+  );
+  emit('workflow.updated', { workflowId: parentId });
+}
+
 async function getSubmitterEmail(workflowId) {
   // Prefer the explicit 'submitted' approval event (recorded since recent deploy)
   const { rows } = await pool.query(
@@ -86,6 +119,7 @@ async function getApprovalPageData(workflowId, user) {
     { rows: sesDocumentRows },
     { rows: eventRows },
     { rows: lockRows },
+    { rows: childRows },
   ] = await Promise.all([
     pool.query('SELECT * FROM ses_docs WHERE workflow_id = $1', [workflowId]),
     pool.query('SELECT * FROM ses_documents WHERE workflow_id = $1 ORDER BY form_index ASC', [workflowId]),
@@ -100,6 +134,17 @@ async function getApprovalPageData(workflowId, user) {
     workflow.lockedBy
       ? pool.query('SELECT name, email FROM users WHERE id = $1', [workflow.lockedBy])
       : Promise.resolve({ rows: [] }),
+    // Children — present only when this is a parent workflow
+    pool.query(
+      `SELECT w.*, s.label AS status_label,
+              (sd.storage_key IS NOT NULL) AS has_document
+       FROM workflows w
+       LEFT JOIN statuses s  ON s.code  = w.status
+       LEFT JOIN ses_docs sd ON sd.workflow_id = w.id
+       WHERE w.parent_workflow_id = $1
+       ORDER BY w.sub_index`,
+      [workflowId]
+    ),
   ]);
 
   const lockedByUser = lockRows[0] || null;
@@ -110,6 +155,7 @@ async function getApprovalPageData(workflowId, user) {
     sesDocuments: camelize(sesDocumentRows),
     events: camelize(eventRows),
     lockedByUser,
+    children: camelize(childRows),
   };
 }
 
@@ -258,6 +304,13 @@ async function signWorkflow(workflowId, user, body) {
   }
 
   emit('workflow.updated', { workflowId });
+
+  // If this is a child workflow, recompute the parent's aggregate status
+  if (workflow.parentWorkflowId) {
+    _syncParentStatus(workflow.parentWorkflowId).catch((e) =>
+      console.error('[ApprovalService] Parent status sync failed:', e.message)
+    );
+  }
 
   // Fire-and-forget: notify CE submitter via in-app notification
   getSubmitterEmail(workflowId).then(async (submitter) => {
@@ -706,6 +759,225 @@ async function sendToVendor(workflowId, user, { toRecipients, ccRecipients, body
   return { message: 'Document sent to vendor', workflowId };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SEND CHILD TO VENDOR — sends one approved child's signed PDF to vendor.
+// The email is a reply in the PARENT's thread; the child's ses_docs holds the PDF.
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function sendChildToVendor(parentId, childId, user, { toRecipients, ccRecipients, body } = {}) {
+  // Verify parent exists and is accessible
+  const parent = await getWorkflowOrThrow(parentId);
+
+  // Verify the child belongs to this parent
+  const { rows: [child] } = await pool.query(
+    'SELECT * FROM workflows WHERE id = $1 AND parent_workflow_id = $2',
+    [childId, parentId]
+  );
+  if (!child) throw Object.assign(new Error('Child workflow not found under this parent'), { status: 404 });
+  if (child.status !== 'approved') {
+    throw Object.assign(
+      new Error(`Child ${childId} must be approved before sending (current status: "${child.status}")`),
+      { status: 400 }
+    );
+  }
+
+  // Get the signed PDF from the child's ses_docs
+  const { rows: [childDoc] } = await pool.query(
+    'SELECT * FROM ses_docs WHERE workflow_id = $1', [childId]
+  );
+  if (!childDoc?.storage_key) {
+    throw Object.assign(new Error(`No signed document found for ${childId}`), { status: 400 });
+  }
+
+  // Get the parent's email thread (all sends use the parent's thread)
+  const { rows: threadRows } = await pool.query(
+    `SELECT message_id FROM thread_messages
+     WHERE workflow_id = $1 AND is_outbound = FALSE
+     ORDER BY received_at ASC LIMIT 1`,
+    [parentId]
+  );
+  if (!threadRows.length) {
+    throw Object.assign(new Error('No email thread found for this workflow'), { status: 400 });
+  }
+
+  const [signedBuffer, { rows: attRows }] = await Promise.all([
+    read(childDoc.storage_key),
+    childDoc.attachment_id
+      ? pool.query('SELECT file_name FROM attachments WHERE id = $1', [childDoc.attachment_id]).then((r) => r.rows)
+      : Promise.resolve([]),
+  ]);
+
+  const fileName   = attRows[0]?.file_name || `SES_${childId}_signed.pdf`;
+  const replyBody  = body
+    ? body.split('\n').map((l) => {
+        const esc = l.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        return `<p>${esc || '&nbsp;'}</p>`;
+      }).join('')
+    : `<p>Dear Team,</p><p>Kindly find the attached approved SES (${childId}) for payment processing.</p><p>Best Regards,<br/>${user.name}</p>`;
+
+  await sendCustomReply(
+    threadRows[0].message_id,
+    replyBody,
+    [{ name: fileName, contentType: 'application/pdf', buffer: signedBuffer }],
+    toRecipients?.length ? toRecipients : undefined,
+    ccRecipients?.length ? ccRecipients : undefined,
+  );
+
+  await pool.query(
+    `UPDATE workflows SET status = 'sent', updated_at = NOW() WHERE id = $1`, [childId]
+  );
+  await Promise.all([
+    pool.query(
+      `INSERT INTO approval_events (workflow_id, type, user_id, comment)
+       VALUES ($1, 'comment', $2, 'Document sent to vendor')`,
+      [childId, user.userId]
+    ),
+    pool.query(
+      `INSERT INTO approval_events (workflow_id, type, user_id, comment)
+       VALUES ($1, 'comment', $2, $3)`,
+      [parentId, user.userId, `${childId} sent to vendor`]
+    ),
+  ]);
+
+  emit('workflow.updated', { workflowId: childId });
+
+  // Recompute parent aggregate status (may advance to 'sent' if all children done)
+  await _syncParentStatus(parentId);
+
+  return { message: `${childId} sent to vendor`, workflowId: parentId, childId };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SEND ALL APPROVED TO VENDOR — one email with all approved children's PDFs.
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function sendAllApprovedToVendor(parentId, user, { toRecipients, ccRecipients, body } = {}) {
+  await getWorkflowOrThrow(parentId);
+
+  // Find all approved children with documents
+  const { rows: approvedChildren } = await pool.query(
+    `SELECT w.id, sd.storage_key, sd.attachment_id
+     FROM workflows w
+     JOIN ses_docs sd ON sd.workflow_id = w.id
+     WHERE w.parent_workflow_id = $1 AND w.status = 'approved'
+     ORDER BY w.sub_index`,
+    [parentId]
+  );
+  if (!approvedChildren.length) {
+    throw Object.assign(new Error('No approved children with documents to send'), { status: 400 });
+  }
+
+  // Get the parent's thread
+  const { rows: threadRows } = await pool.query(
+    `SELECT message_id FROM thread_messages
+     WHERE workflow_id = $1 AND is_outbound = FALSE
+     ORDER BY received_at ASC LIMIT 1`,
+    [parentId]
+  );
+  if (!threadRows.length) {
+    throw Object.assign(new Error('No email thread found for this workflow'), { status: 400 });
+  }
+
+  // Build attachment list
+  const attachmentList = [];
+  for (const child of approvedChildren) {
+    const pdfBuffer = await read(child.storage_key);
+    const { rows: attRows } = child.attachment_id
+      ? await pool.query('SELECT file_name FROM attachments WHERE id = $1', [child.attachment_id])
+      : { rows: [] };
+    const fileName = attRows[0]?.file_name || `SES_${child.id}_signed.pdf`;
+    attachmentList.push({ name: fileName, contentType: 'application/pdf', buffer: pdfBuffer });
+  }
+
+  const childIds  = approvedChildren.map((c) => c.id);
+  const replyBody = body
+    ? body.split('\n').map((l) => {
+        const esc = l.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        return `<p>${esc || '&nbsp;'}</p>`;
+      }).join('')
+    : `<p>Dear Team,</p>
+       <p>Kindly find the attached approved Service Entry Sheets for payment processing.</p>
+       <p>Reference(s): ${childIds.join(', ')}</p>
+       <p>Best Regards,<br/>${user.name}</p>`;
+
+  await sendCustomReply(
+    threadRows[0].message_id,
+    replyBody,
+    attachmentList,
+    toRecipients?.length ? toRecipients : undefined,
+    ccRecipients?.length ? ccRecipients : undefined,
+  );
+
+  // Mark all sent children + log events
+  await Promise.all([
+    pool.query(
+      `UPDATE workflows SET status = 'sent', updated_at = NOW()
+       WHERE id = ANY($1)`,
+      [childIds]
+    ),
+    pool.query(
+      `INSERT INTO approval_events (workflow_id, type, user_id, comment)
+       VALUES ($1, 'comment', $2, $3)`,
+      [parentId, user.userId, `All approved forms sent to vendor: ${childIds.join(', ')}`]
+    ),
+    ...childIds.map((id) =>
+      pool.query(
+        `INSERT INTO approval_events (workflow_id, type, user_id, comment)
+         VALUES ($1, 'comment', $2, 'Document sent to vendor')`,
+        [id, user.userId]
+      )
+    ),
+  ]);
+
+  childIds.forEach((id) => emit('workflow.updated', { workflowId: id }));
+
+  // Recompute parent status
+  await _syncParentStatus(parentId);
+
+  return { message: `Sent ${childIds.length} document(s) to vendor`, workflowId: parentId, sent: childIds };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPLETE PARENT — manually close a parent workflow regardless of child states.
+// Used when one or more children won't proceed (e.g. CH rejected an SES).
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function completeParentWorkflow(parentId, user) {
+  const parent = await getWorkflowOrThrow(parentId);
+  if (!parent) throw Object.assign(new Error('Workflow not found'), { status: 404 });
+  if (['closed', 'cancelled'].includes(parent.status)) {
+    throw Object.assign(new Error(`Workflow is already "${parent.status}"`), { status: 409 });
+  }
+
+  // Gather outstanding children so we can surface them in the audit event
+  const { rows: outstanding } = await pool.query(
+    `SELECT id, status FROM workflows
+     WHERE parent_workflow_id = $1 AND status NOT IN ('sent', 'closed', 'cancelled')`,
+    [parentId]
+  );
+
+  const detail = outstanding.length
+    ? `Marked complete with ${outstanding.length} outstanding form(s): ${outstanding.map((c) => `${c.id} (${c.status})`).join(', ')}`
+    : 'Marked complete — all forms sent';
+
+  await pool.query(
+    `UPDATE workflows SET status = 'closed', updated_at = NOW() WHERE id = $1`, [parentId]
+  );
+  await pool.query(
+    `INSERT INTO approval_events (workflow_id, type, user_id, comment)
+     VALUES ($1, 'comment', $2, $3)`,
+    [parentId, user.userId, detail]
+  );
+
+  emit('workflow.updated', { workflowId: parentId });
+
+  return {
+    message: 'Workflow marked as complete',
+    workflowId: parentId,
+    outstanding: outstanding.map((c) => ({ id: c.id, status: c.status })),
+  };
+}
+
 module.exports = {
   getApprovalPageData,
   signWorkflow,
@@ -716,5 +988,8 @@ module.exports = {
   reply: addApprovalReply,
   replyToVendor,
   sendToVendor,
+  sendChildToVendor,
+  sendAllApprovedToVendor,
+  completeParentWorkflow,
   getThreadRecipients,
 };

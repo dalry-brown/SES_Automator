@@ -107,4 +107,30 @@ router.post('/:workflowId/send-to-vendor', [authenticate, validate(sendToVendorS
   } catch (err) { next(err); }
 });
 
+// POST /api/approval/:workflowId/send-child/:childId — send one child's signed PDF
+router.post('/:workflowId/send-child/:childId', [authenticate, validate(sendToVendorSchema)], async (req, res, next) => {
+  try {
+    const result = await svc().sendChildToVendor(
+      req.params.workflowId, req.params.childId, req.user, req.body
+    );
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
+// POST /api/approval/:workflowId/send-all-approved — send all approved children in one email
+router.post('/:workflowId/send-all-approved', [authenticate, validate(sendToVendorSchema)], async (req, res, next) => {
+  try {
+    const result = await svc().sendAllApprovedToVendor(req.params.workflowId, req.user, req.body);
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
+// POST /api/approval/:workflowId/complete — manually close a parent with outstanding children
+router.post('/:workflowId/complete', authenticate, async (req, res, next) => {
+  try {
+    const result = await svc().completeParentWorkflow(req.params.workflowId, req.user);
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
 module.exports = router;
