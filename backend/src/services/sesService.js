@@ -14,6 +14,38 @@ const {
 const { sendDirectEmail } = require('../graph/mail');
 const { emit } = require('./sseService');
 
+// Regenerates the merged SES document for every form tab after submission.
+// Uses the stored attOrder/removedAttachments so the document always matches
+// what the CE last saved, including attachment order and removals.
+// Runs fire-and-forget — errors are logged but never surface to the caller.
+async function _regenerateDocuments(formId, workflowId, latest) {
+  const { generatePreview } = require('./documentService');
+  const formData = latest?.data || {};
+  const tabs     = Array.isArray(formData.forms) ? formData.forms : null;
+  const count    = tabs ? tabs.length : 1;
+
+  for (let i = 0; i < count; i++) {
+    const tab     = tabs ? tabs[i] : formData;
+    const removed = new Set(tab?.removedAttachments ?? []);
+    const order   = tab?.attOrder;
+
+    let orderedIds;
+    if (order && order.length > 0) {
+      orderedIds = order.filter((id) => !removed.has(id));
+    } else {
+      // No explicit ordering stored — use all email attachments in arrival order
+      const { rows } = await pool.query(
+        `SELECT id FROM attachments WHERE workflow_id = $1 AND source = 'email' ORDER BY created_at`,
+        [workflowId]
+      );
+      orderedIds = rows.map((r) => r.id).filter((id) => !removed.has(id));
+    }
+
+    await generatePreview(formId, i, orderedIds);
+    console.log(`[SesService] Regenerated document for workflow ${workflowId} form ${i}`);
+  }
+}
+
 const FRONTEND_URL  = process.env.FRONTEND_URL  || 'http://localhost:3000';
 
 // Statuses where the form is NOT editable by a cost engineer
@@ -211,6 +243,12 @@ async function submitSES(formId, user) {
   }
 
   emit('workflow.updated', { workflowId: form.workflowId });
+
+  // Regenerate merged document in the background so the contract holder always
+  // sees a PDF that reflects the current saved form fields and attachment order.
+  _regenerateDocuments(form.id, form.workflowId, latest).catch((e) => {
+    console.error('[SesService] Background document regeneration failed:', e.message);
+  });
 
   // Notify contract holder
   if (chEmail) {
