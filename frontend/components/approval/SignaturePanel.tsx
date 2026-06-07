@@ -222,10 +222,10 @@ export function SignaturePanel({
   const isActionable = ['pending_approval', 'queried'].includes(status);
 
   const isEditor = user?.role === 'editor' || user?.role === 'admin';
-  // isAssignedCH: the only person who can sign (exact email match, no admin override)
-  const isAssignedCH = user?.role === 'user' && workflow.contractHolderEmail === user.email;
-  // isAdmin: can Return and Re-route but not sign
-  const isAdminUser = user?.role === 'admin';
+  // isAssignedCH: email match is the only criterion — an admin who is also the CH can sign
+  const isAssignedCH = !!workflow.contractHolderEmail && workflow.contractHolderEmail === user?.email;
+  // isAdminUser: admin who is NOT the assigned CH — observe + Return/Reroute only
+  const isAdminUser = user?.role === 'admin' && !isAssignedCH;
   // canAct: controls Return/Reroute visibility (CH or admin, but NOT editor-only role)
   const canAct = isActionable && hasMergedDoc && (isAssignedCH || isAdminUser);
 

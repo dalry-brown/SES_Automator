@@ -49,7 +49,7 @@ export function SignatureModal({ open, user, loading, loadingLabel = 'Signing…
       minWidth:    1.2,
       maxWidth:    2.8,
       penColor:    '#111111',
-      backgroundColor: 'rgb(255,255,255)',
+      backgroundColor: 'rgba(0,0,0,0)',
     });
     pad.addEventListener('endStroke', () => setIsEmpty(pad.isEmpty()));
     padRef.current = pad;
@@ -81,10 +81,8 @@ export function SignatureModal({ open, user, loading, loadingLabel = 'Signing…
   const typedToDataUrl = (): string => {
     const offscreen = document.createElement('canvas');
     offscreen.width  = 440;
-    offscreen.height = 120;
+    offscreen.height = 80;
     const ctx = offscreen.getContext('2d')!;
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(0, 0, offscreen.width, offscreen.height);
     ctx.fillStyle = '#111111';
     ctx.font      = `48px ${SIGNATURE_FONTS[fontIdx].style}`;
     ctx.textAlign = 'center';
