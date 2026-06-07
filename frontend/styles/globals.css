@@ -60,4 +60,14 @@
   .dur-ok   { @apply bg-green-50 text-green-700 text-[12px] font-semibold px-2 py-0.5 rounded-full inline-block whitespace-nowrap; }
   .dur-warn { @apply bg-orange-50 text-orange-700 text-[12px] font-semibold px-2 py-0.5 rounded-full inline-block whitespace-nowrap; }
   .dur-over { @apply bg-red-50 text-red-700 text-[12px] font-semibold px-2 py-0.5 rounded-full inline-block whitespace-nowrap; }
+
+  /* New-item highlight flash — used after submitting an SES and redirecting to pending-approval */
+  .row-flash { animation: row-flash 2.5s ease-out forwards; }
+}
+
+@keyframes row-flash {
+  0%, 30% { background-color: #fef3c7; }
+  55%     { background-color: #fef9c3; }
+  80%     { background-color: #fffde7; }
+  100%    { background-color: transparent; }
 }

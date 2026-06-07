@@ -1,12 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertCircle, CheckCircle, Clock, RotateCcw, XCircle, Lock as LockIcon } from 'lucide-react';
 import { useWorkflow, useWorkflowMutations } from '@/lib/hooks/useWorkflows';
 import { useSesFormByWorkflow } from '@/lib/hooks/useSES';
-import { sesApi, emailsApi, attachmentsApi } from '@/lib/api';
+import { sesApi, emailsApi, attachmentsApi, workflowsApi } from '@/lib/api';
 import { SesFormPanel } from '@/components/ses/SesFormPanel';
 import { PageSpinner } from '@/components/ui/Spinner';
 import { useToast } from '@/components/ui/Toast';
@@ -132,6 +132,7 @@ export default function SesFormPage() {
   const searchParams = useSearchParams();
   const qc = useQueryClient();
   const [creating, setCreating] = useState(false);
+  const hasMarkedRead = useRef(false);
 
   const { data: workflow, isLoading: wfLoading } = useWorkflow(id);
   const { data: sesForm, isLoading: formLoading, refetch: refetchForm } = useSesFormByWorkflow(id);
@@ -148,6 +149,13 @@ export default function SesFormPage() {
     queryFn:  () => attachmentsApi.byWorkflow(id),
     enabled:  !!id,
   });
+
+  // Auto-mark thread messages as read when this workflow page is opened
+  useEffect(() => {
+    if (!id || hasMarkedRead.current) return;
+    hasMarkedRead.current = true;
+    workflowsApi.markRead(id).catch(() => {});
+  }, [id]);
 
   // Acquire lock on mount, release on unmount — only when form is editable
   const status = workflow?.status as WorkflowStatus | undefined;
@@ -241,7 +249,7 @@ export default function SesFormPage() {
         onCreateForm={handleCreateForm}
         onSubmitted={() => {
           qc.invalidateQueries({ queryKey: ['workflows'] });
-          router.replace(`/workflows/${id}`);
+          router.push(`/pending-approval?highlight=${id}`);
         }}
         onBack={() => router.push(backHref)}
       />

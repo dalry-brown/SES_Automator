@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useMemo } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useMemo, useEffect, useRef } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { Search, Edit, Send, FileText, ChevronRight, MessageCircle, AlertCircle, RotateCcw, UserCheck } from 'lucide-react';
 import { useWorkflows } from '@/lib/hooks/useWorkflows';
@@ -463,11 +463,26 @@ function EditorSidePanel({ workflow }: { workflow: Workflow }) {
 export default function PendingApprovalPage() {
   const { effectiveRole } = useAuth();
   const isChView = effectiveRole === 'user';
+  const searchParams = useSearchParams();
+  const highlightId  = searchParams.get('highlight');
 
   const [search, setSearch]     = useState('');
   const [selected, setSelected] = useState<Workflow | null>(null);
+  const [flashId, setFlashId]   = useState<string | null>(highlightId);
+  const autoSelectedRef         = useRef(false);
 
   const { data: allWf, isLoading } = useWorkflows();
+
+  // When data arrives, auto-select the highlighted workflow and schedule flash clear
+  useEffect(() => {
+    if (!highlightId || !allWf || autoSelectedRef.current) return;
+    const target = allWf.find((w) => w.id === highlightId);
+    if (!target) return;
+    autoSelectedRef.current = true;
+    setSelected(target);
+    const t = setTimeout(() => setFlashId(null), 2500);
+    return () => clearTimeout(t);
+  }, [highlightId, allWf]);
 
   const workflows = useMemo(() => {
     const list = (allWf ?? []).filter((w) => {
@@ -533,12 +548,14 @@ export default function PendingApprovalPage() {
                   {workflows.map((wf) => {
                     const days = daysSince(wf.submittedAt);
                     const isSelected = selected?.id === wf.id;
+                    const isFlashing = flashId === wf.id;
                     return (
                       <div
                         key={wf.id}
                         onClick={() => setSelected(wf)}
                         className={cn(
-                          'flex items-center gap-4 px-5 py-4 cursor-pointer transition-colors group',
+                          'flex items-center gap-4 px-5 py-4 cursor-pointer group',
+                          isFlashing ? 'row-flash' : 'transition-colors',
                           isSelected ? 'bg-ce-bg border-l-2 border-ce-navy' : 'hover:bg-ce-bg/60'
                         )}
                       >
@@ -595,7 +612,7 @@ export default function PendingApprovalPage() {
                       return (
                         <tr
                           key={wf.id}
-                          className={cn('ce-row', selected?.id === wf.id && 'selected')}
+                          className={cn('ce-row', selected?.id === wf.id && 'selected', flashId === wf.id && 'row-flash')}
                           onClick={() => setSelected(wf)}
                         >
                           <td className="font-semibold text-ce-navy">{wf.id}</td>
