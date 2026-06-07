@@ -381,3 +381,13 @@ CREATE TABLE IF NOT EXISTS notifications (
 
 CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_is_read  ON notifications(user_id, is_read);
+
+-- =============================================================================
+-- CHILD WORKFLOW SUPPORT  (multi-SES branching from one email)
+-- =============================================================================
+ALTER TABLE workflows ADD COLUMN IF NOT EXISTS parent_workflow_id TEXT REFERENCES workflows(id);
+ALTER TABLE workflows ADD COLUMN IF NOT EXISTS sub_label TEXT;   -- 'A', 'B', 'C'...
+ALTER TABLE workflows ADD COLUMN IF NOT EXISTS sub_index  INT;   -- 0, 1, 2... for ordering
+
+CREATE INDEX IF NOT EXISTS idx_workflows_parent ON workflows(parent_workflow_id)
+  WHERE parent_workflow_id IS NOT NULL;

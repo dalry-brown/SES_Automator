@@ -143,6 +143,17 @@ async function start() {
       CREATE INDEX IF NOT EXISTS idx_notifications_is_read  ON notifications(user_id, is_read);
     `).catch(() => {});
 
+    // Child workflow columns — idempotent, safe to run on every boot
+    await pool.query(`
+      ALTER TABLE workflows ADD COLUMN IF NOT EXISTS parent_workflow_id TEXT REFERENCES workflows(id);
+      ALTER TABLE workflows ADD COLUMN IF NOT EXISTS sub_label TEXT;
+      ALTER TABLE workflows ADD COLUMN IF NOT EXISTS sub_index  INT;
+    `).catch((err) => console.warn('[Boot] Child workflow columns migration failed:', err.message));
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_workflows_parent ON workflows(parent_workflow_id)
+        WHERE parent_workflow_id IS NOT NULL;
+    `).catch(() => {});
+
     startLockCleanupJob();
     startTrackerSyncJob();
     warmupBrowser().catch((err) => console.warn('[Boot] Puppeteer warm-up failed (non-fatal):', err.message));

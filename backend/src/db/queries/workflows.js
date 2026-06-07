@@ -3,8 +3,22 @@ const { camelize, camelizeRow } = require('../camelize');
 
 async function listWorkflows(user) {
   const isUser = user.role === 'user';
-  const params = isUser ? [user.email] : [];
-  const where  = isUser ? 'WHERE w.contract_holder_email = $1' : '';
+
+  // CE/admin: top-level workflows only (no children).
+  // Contract holder: leaf workflows assigned to them — children (sub-SES) or
+  // single-SES workflows that haven't been split, but NOT split parents
+  // (those are CE management surfaces, not CH approval items).
+  let where, params;
+  if (isUser) {
+    where  = `WHERE w.contract_holder_email = $1
+                AND NOT EXISTS (
+                  SELECT 1 FROM workflows c WHERE c.parent_workflow_id = w.id LIMIT 1
+                )`;
+    params = [user.email];
+  } else {
+    where  = 'WHERE w.parent_workflow_id IS NULL';
+    params = [];
+  }
 
   const { rows } = await pool.query(
     `WITH first_inbound AS (
@@ -93,8 +107,17 @@ async function getWorkflow(id, user) {
 
 async function getWorkflowStats(user) {
   const isUser = user.role === 'user';
-  const params = isUser ? [user.email] : [];
-  const where  = isUser ? 'WHERE contract_holder_email = $1' : '';
+  // Exclude child workflows from stats in all cases — they are managed
+  // through their parent and should not inflate counts.
+  let where, params;
+  if (isUser) {
+    where  = `WHERE contract_holder_email = $1
+                AND NOT EXISTS (SELECT 1 FROM workflows c WHERE c.parent_workflow_id = workflows.id LIMIT 1)`;
+    params = [user.email];
+  } else {
+    where  = 'WHERE parent_workflow_id IS NULL';
+    params = [];
+  }
 
   const { rows } = await pool.query(
     `SELECT
@@ -114,6 +137,20 @@ async function getWorkflowStats(user) {
     params
   );
   return camelizeRow(rows[0]);
+}
+
+async function getWorkflowChildren(parentId) {
+  const { rows } = await pool.query(
+    `SELECT w.*, s.label AS status_label,
+       (sd.storage_key IS NOT NULL) AS has_document
+     FROM workflows w
+     LEFT JOIN statuses s ON s.code = w.status
+     LEFT JOIN ses_docs  sd ON sd.workflow_id = w.id
+     WHERE w.parent_workflow_id = $1
+     ORDER BY w.sub_index`,
+    [parentId]
+  );
+  return camelize(rows);
 }
 
 async function updateWorkflowStatus(id, status) {
@@ -204,6 +241,7 @@ module.exports = {
   listWorkflows,
   getWorkflow,
   getWorkflowStats,
+  getWorkflowChildren,
   updateWorkflowStatus,
   updateWorkflowCategory,
   getEmails,

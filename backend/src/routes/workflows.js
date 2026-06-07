@@ -26,6 +26,15 @@ router.get('/stats', authenticate, async (req, res, next) => {
   }
 });
 
+// GET /api/workflows/:id/children — child sub-workflows of a split parent
+router.get('/:id/children', authenticate, async (req, res, next) => {
+  try {
+    const { getWorkflowChildren } = require('../db/queries/workflows');
+    const children = await getWorkflowChildren(req.params.id);
+    res.json({ children });
+  } catch (err) { next(err); }
+});
+
 // GET /api/workflows/:id — single workflow
 router.get('/:id', authenticate, async (req, res, next) => {
   try {
