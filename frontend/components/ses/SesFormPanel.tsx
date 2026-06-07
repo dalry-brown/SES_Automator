@@ -295,7 +295,7 @@ export function SesFormPanel({
   }, []);
 
   const { register, handleSubmit, reset, watch, setValue, getValues, formState: { isDirty, isSubmitting } } =
-    useForm<FormValues>({ defaultValues: {} });
+    useForm<FormValues>({ defaultValues: { licence: 'Jubilee' } });
 
   // ── Load from DB ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -306,7 +306,8 @@ export function SesFormPanel({
     setRemovedByTab(loadRemovedSets(sesForm));
     setAttOrderByTab(loadAttOrders(sesForm));
     setActiveTab(0);
-    reset(forms[0] ?? {});
+    const first = forms[0] ?? {};
+    reset({ licence: 'Jubilee', ...first });
     setAutoFilled(false);
     setShowAutofillBanner(false);
     const lic = forms[0]?.licence;
@@ -403,7 +404,7 @@ export function SesFormPanel({
     setTabValues(vals);
     setSesRowsByTab(rows);
     setActiveTab(idx);
-    reset(vals[idx] ?? {});
+    reset({ licence: 'Jubilee', ...(vals[idx] ?? {}) });
     setAutoFilled(false);
     setMergedPreviewId(null);
     const isEmpty = !vals[idx]?.vendorName && !vals[idx]?.invoiceNumber;
@@ -425,7 +426,7 @@ export function SesFormPanel({
     setRemovedByTab(newRemoved);
     setAttOrderByTab((prev) => [...prev, null]);
     setActiveTab(newIdx);
-    reset({});
+    reset({ licence: 'Jubilee' });
     setAutoFilled(false);
     setShowAutofillBanner(!!prevVendor);
   }
