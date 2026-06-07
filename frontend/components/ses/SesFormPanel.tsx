@@ -13,7 +13,7 @@ import { useSesMutations, useSesVersions } from '@/lib/hooks/useSES';
 import { useToast } from '@/components/ui/Toast';
 import { AttachmentChip, AttachmentSidebarView } from '@/components/ui/AttachmentPreview';
 import { AutocompleteInput } from '@/components/ui/AutocompleteInput';
-import { suggestionsApi, documentsApi, sesDocumentsApi } from '@/lib/api';
+import { suggestionsApi, documentsApi, sesDocumentsApi, workflowsApi } from '@/lib/api';
 import type { SesForm, Workflow, ThreadMessage, Attachment, FormVersion, SesDocument } from '@/types';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -255,6 +255,15 @@ export function SesFormPanel({
   });
   const sesDocuments: SesDocument[] = sesDocsData?.documents ?? [];
 
+  // ── Child workflows (only after submission) ───────────────────────────────
+  const isSubmitted = !['received', 'in_progress'].includes(workflow.status);
+  const { data: childrenData } = useQuery({
+    queryKey: ['workflow-children', workflowId],
+    queryFn:  () => workflowsApi.getChildren(workflowId),
+    enabled:  isSubmitted,
+  });
+  const childWorkflows: Workflow[] = childrenData?.children ?? [];
+
   // ── "No form" screen count ────────────────────────────────────────────────
   const [initCount, setInitCount] = useState(1);
 
@@ -273,10 +282,21 @@ export function SesFormPanel({
   const [showCustomLicence, setShowCustomLicence] = useState(false);
   const [mergedPreviewId, setMergedPreviewId]     = useState<string | null>(null);
   const [generatingPreview, setGeneratingPreview] = useState(false);
-  const [validationErrors, setValidationErrors]   = useState<string[]>([]);
+  const [tabErrors, setTabErrors]                 = useState<Record<number, string[]>>({});
   const [attOrderByTab, setAttOrderByTab]   = useState<(string[] | null)[]>([null]);
   const dragAttIdx  = useRef<number | null>(null);
   const [dragOverIdx, setDragOverIdx]       = useState<number | null>(null);
+
+  // ── Per-tab lock state (child already submitted/approved/sent) ────────────
+  const CHILD_LOCK_STATUSES = ['pending_approval', 'approved', 'sent', 'closed', 'cancelled'];
+  const tabLocked: Record<number, boolean> = {};
+  for (const child of childWorkflows) {
+    if (child.subIndex != null && CHILD_LOCK_STATUSES.includes(child.status)) {
+      tabLocked[child.subIndex] = true;
+    }
+  }
+  const isActiveTabLocked = tabLocked[activeTab] ?? false;
+  const effectiveReadOnly = isReadOnly || isActiveTabLocked;
 
   // ── Resizable right panel ─────────────────────────────────────────────────
   const [rightWidth, setRightWidth]         = useState(300);
@@ -313,7 +333,7 @@ export function SesFormPanel({
     const lic = forms[0]?.licence;
     setShowCustomLicence(!!lic && !LICENCE_OPTIONS.includes(lic as typeof LICENCE_OPTIONS[number]));
     setMergedPreviewId(null);
-    setValidationErrors([]);
+    setTabErrors({});
   }, [sesForm?.id, sesForm?.currentVersion, reset]);
 
   // Sync mergedPreviewId with the stored ses_document for the active tab
@@ -345,27 +365,29 @@ export function SesFormPanel({
   const descWordCount        = countWords(description);
 
   // ── Validate all tab data before final submit ────────────────────────────
-  function validateAllTabs(): string[] {
+  function validateAllTabs(): Record<number, string[]> {
     const { vals } = snapshot();
-    const errors: string[] = [];
+    const errMap: Record<number, string[]> = {};
 
     vals.forEach((tab, i) => {
-      const label = vals.length > 1 ? ` (Form ${i + 1})` : '';
+      if (tabLocked[i]) return; // locked tabs are already submitted — skip
+      const errs: string[] = [];
       REQUIRED_FIELDS.forEach((f) => {
-        if (!tab[f]) errors.push(`${FIELD_LABELS[f] || f}${label} is required`);
+        if (!tab[f]) errs.push(`${FIELD_LABELS[f] || f} is required`);
       });
       const tabDesc = tab.description || '';
       if (tabDesc && countWords(tabDesc) > DESCRIPTION_MAX_WORDS) {
-        errors.push(`Scope description${label} must be ${DESCRIPTION_MAX_WORDS} words or fewer`);
+        errs.push(`Scope description must be ${DESCRIPTION_MAX_WORDS} words or fewer`);
       }
       const tabRows = sesRowsByTab[i] ?? [];
       const hasSesNum = tabRows.some((r) => r.sesNumber);
       if (hasSesNum && !tab.enteredBy) {
-        errors.push(`"Entered into SAP by"${label} is required when SES numbers are present`);
+        errs.push('"Entered into SAP by" is required when SES numbers are present');
       }
+      if (errs.length > 0) errMap[i] = errs;
     });
 
-    return errors;
+    return errMap;
   }
 
   // ── Save suggestions after a successful save ─────────────────────────────
@@ -556,6 +578,7 @@ export function SesFormPanel({
       setTabValues(allVals);
       setSesRowsByTab(allRows);
       reset(data);
+      setTabErrors((prev) => { const next = { ...prev }; delete next[activeTab]; return next; });
       success('Form saved.');
       persistSuggestions(data);
     } catch (err) {
@@ -567,12 +590,15 @@ export function SesFormPanel({
   const handleSubmitForApproval = async () => {
     if (!sesForm) return;
     if (isDirty) { warning('You have unsaved changes — save before submitting.'); return; }
-    const errors = validateAllTabs();
-    if (errors.length > 0) {
-      setValidationErrors(errors);
+    const errsByTab = validateAllTabs();
+    if (Object.keys(errsByTab).length > 0) {
+      setTabErrors(errsByTab);
+      // Jump to the first tab that has errors so the user sees them
+      const firstErrTab = Math.min(...Object.keys(errsByTab).map(Number));
+      if (firstErrTab !== activeTab) switchTab(firstErrTab);
       return;
     }
-    setValidationErrors([]);
+    setTabErrors({});
     try {
       await submit.mutateAsync(sesForm.id);
       success('Submitted for approval.');
@@ -937,19 +963,31 @@ export function SesFormPanel({
         </div>
       )}
 
-      {validationErrors.length > 0 && (
+      {(tabErrors[activeTab]?.length ?? 0) > 0 && (
         <div className="mx-5 mt-3 bg-red-50 border border-red-200 rounded-lg px-3 py-2.5 flex-shrink-0">
           <div className="flex items-center justify-between mb-1">
-            <span className="text-[12.5px] font-semibold text-red-700">Fix the following before submitting:</span>
-            <button onClick={() => setValidationErrors([])} className="text-red-400 hover:text-red-600 transition-colors">
+            <span className="text-[12.5px] font-semibold text-red-700">Fix before submitting:</span>
+            <button onClick={() => setTabErrors((p) => { const n = { ...p }; delete n[activeTab]; return n; })} className="text-red-400 hover:text-red-600 transition-colors">
               <X size={13} />
             </button>
           </div>
           <ul className="list-disc list-inside space-y-0.5">
-            {validationErrors.map((e, i) => (
+            {(tabErrors[activeTab] ?? []).map((e, i) => (
               <li key={i} className="text-[12px] text-red-600">{e}</li>
             ))}
           </ul>
+          {Object.keys(tabErrors).filter((k) => Number(k) !== activeTab).length > 0 && (
+            <p className="text-[11.5px] text-red-500 mt-1.5">
+              {Object.keys(tabErrors).filter((k) => Number(k) !== activeTab).length} other form(s) also have errors.
+            </p>
+          )}
+        </div>
+      )}
+
+      {isActiveTabLocked && (
+        <div className="mx-5 mt-3 flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-[12.5px] text-amber-800 flex-shrink-0">
+          <Lock size={13} className="flex-shrink-0" />
+          This form is locked — the sub-workflow is already {childWorkflows.find((c) => c.subIndex === activeTab)?.statusLabel ?? 'in progress'}.
         </div>
       )}
 
@@ -957,28 +995,44 @@ export function SesFormPanel({
       <div className="flex items-center gap-0 px-5 pt-3 flex-shrink-0 flex-wrap">
         {/* Tabs */}
         <div className="flex gap-1 flex-wrap">
-          {tabValues.map((_, i) => (
-            <button
-              key={i}
-              onClick={() => switchTab(i)}
-              className={cn(
-                'flex items-center gap-1.5 px-3 py-[6px] rounded-t-lg text-[12.5px] font-medium border border-b-0 transition-all',
-                i === activeTab
-                  ? 'bg-white text-ce-navy border-ce-border shadow-[0_-1px_0_0_white]'
-                  : 'bg-ce-bg text-ce-muted border-transparent hover:border-ce-border hover:bg-white/70',
-              )}
-            >
-              Form {i + 1}
-              {tabCount > 1 && !isReadOnly && (
-                <span
-                  onClick={(e) => { e.stopPropagation(); deleteTab(i); }}
-                  className="text-ce-hint hover:text-red-500 transition-colors leading-none cursor-pointer"
-                >
-                  <X size={11} />
-                </span>
-              )}
-            </button>
-          ))}
+          {tabValues.map((_, i) => {
+            const hasErr    = (tabErrors[i]?.length ?? 0) > 0;
+            const isLocked  = tabLocked[i] ?? false;
+            return (
+              <button
+                key={i}
+                onClick={() => switchTab(i)}
+                className={cn(
+                  'flex items-center gap-1.5 px-3 py-[6px] rounded-t-lg text-[12.5px] font-medium border border-b-0 transition-all',
+                  i === activeTab
+                    ? hasErr
+                      ? 'bg-white text-red-700 border-red-300 shadow-[0_-1px_0_0_white]'
+                      : 'bg-white text-ce-navy border-ce-border shadow-[0_-1px_0_0_white]'
+                    : hasErr
+                      ? 'bg-red-50 text-red-600 border-red-200 hover:bg-red-50/80'
+                      : isLocked
+                        ? 'bg-ce-bg text-ce-muted border-transparent hover:border-ce-border hover:bg-white/70 opacity-60'
+                        : 'bg-ce-bg text-ce-muted border-transparent hover:border-ce-border hover:bg-white/70',
+                )}
+              >
+                {isLocked && <Lock size={10} className="text-ce-hint" />}
+                Form {i + 1}
+                {hasErr && (
+                  <span className="w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center flex-shrink-0">
+                    {tabErrors[i].length}
+                  </span>
+                )}
+                {tabCount > 1 && !isReadOnly && !isLocked && (
+                  <span
+                    onClick={(e) => { e.stopPropagation(); deleteTab(i); }}
+                    className="text-ce-hint hover:text-red-500 transition-colors leading-none cursor-pointer"
+                  >
+                    <X size={11} />
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
 
         {/* Per-tab controls */}
@@ -1018,7 +1072,7 @@ export function SesFormPanel({
         <div className="flex-1 overflow-y-auto px-5 py-4 min-w-0 bg-ce-bg">
 
           {/* DB autofill button (only Form 1 when not already filled) */}
-          {!autoFilled && !isReadOnly && activeTab === 0 && (
+          {!autoFilled && !effectiveReadOnly && activeTab === 0 && (
             <div className="flex justify-end mb-3">
               <button
                 onClick={handleDbAutofill}
@@ -1040,7 +1094,7 @@ export function SesFormPanel({
                   onChange={(v) => setValue('vendorName', v, { shouldDirty: true })}
                   onLinkedValue={(f, v) => setValue(f as keyof FormValues, v, { shouldDirty: true })}
                   placeholder="e.g. Acme Drilling Ltd"
-                  ro={isReadOnly}
+                  ro={effectiveReadOnly}
                 />
               </FF>
               <FF label="Supplier number *">
@@ -1050,11 +1104,11 @@ export function SesFormPanel({
                   onChange={(v) => setValue('supplierNumber', v, { shouldDirty: true })}
                   placeholder="e.g. SUP-00441"
                   auto={autoFilled}
-                  ro={isReadOnly}
+                  ro={effectiveReadOnly}
                 />
               </FF>
               <FF label="Invoice date *">
-                <FI {...register('invoiceDate')} type="date" auto={autoFilled} disabled={isReadOnly} />
+                <FI {...register('invoiceDate')} type="date" auto={autoFilled} disabled={effectiveReadOnly} />
               </FF>
               <FF label="Date received *">
                 <FI
@@ -1069,7 +1123,7 @@ export function SesFormPanel({
 
           {/* Invoice details card */}
           <Card title={tabCount > 1 ? `Invoice details — Form ${activeTab + 1}` : 'Invoice details'}>
-            <fieldset disabled={isReadOnly} className="grid grid-cols-2 gap-2.5">
+            <fieldset disabled={effectiveReadOnly} className="grid grid-cols-2 gap-2.5">
               <FF label="Invoice number *">
                 <FI {...register('invoiceNumber')} placeholder="e.g. INV-2025-004" />
               </FF>
@@ -1101,18 +1155,18 @@ export function SesFormPanel({
                       value={row.sesNumber}
                       onChange={(e) => updateSesRows((r) => r.map((x, j) => j === i ? { ...x, sesNumber: e.target.value } : x))}
                       placeholder="SES number"
-                      disabled={isReadOnly}
+                      disabled={effectiveReadOnly}
                     />
                     <FI
                       value={row.amount}
                       onChange={(e) => updateSesRows((r) => r.map((x, j) => j === i ? { ...x, amount: e.target.value } : x))}
                       placeholder="Amount"
-                      disabled={isReadOnly}
+                      disabled={effectiveReadOnly}
                     />
                     <button
                       type="button"
                       onClick={() => currentRows.length > 1 && updateSesRows((r) => r.filter((_, j) => j !== i))}
-                      disabled={isReadOnly || currentRows.length <= 1}
+                      disabled={effectiveReadOnly || currentRows.length <= 1}
                       className="w-6 h-6 border border-ce-border rounded-md flex items-center justify-center text-ce-muted hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-all disabled:opacity-30"
                     >
                       <X size={12} />
@@ -1120,7 +1174,7 @@ export function SesFormPanel({
                   </div>
                 ))}
               </div>
-              {!isReadOnly && (
+              {!effectiveReadOnly && (
                 <button
                   type="button"
                   onClick={() => updateSesRows((r) => [...r, { sesNumber: '', amount: '' }])}
@@ -1143,9 +1197,9 @@ export function SesFormPanel({
                       {...register('licence')}
                       placeholder="Jubilee or TEN"
                       className="flex-1"
-                      disabled={isReadOnly}
+                      disabled={effectiveReadOnly}
                     />
-                    {!isReadOnly && (
+                    {!effectiveReadOnly && (
                       <button
                         type="button"
                         onClick={() => { setShowCustomLicence(false); setValue('licence', 'Jubilee', { shouldDirty: true }); }}
@@ -1167,7 +1221,7 @@ export function SesFormPanel({
                         setValue('licence', e.target.value, { shouldDirty: true });
                       }
                     }}
-                    disabled={isReadOnly}
+                    disabled={effectiveReadOnly}
                     auto={autoFilled}
                   >
                     {LICENCE_OPTIONS.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
@@ -1177,7 +1231,7 @@ export function SesFormPanel({
               </FF>
 
               <FF label="WBS / Cost code *">
-                <FI {...register('wbsElement')} auto={autoFilled} placeholder="e.g. WBS-4410-221" disabled={isReadOnly} />
+                <FI {...register('wbsElement')} auto={autoFilled} placeholder="e.g. WBS-4410-221" disabled={effectiveReadOnly} />
               </FF>
               <FF label="Contract holder name *">
                 <AutocompleteInput
@@ -1187,7 +1241,7 @@ export function SesFormPanel({
                   onLinkedValue={(f, v) => setValue(f as keyof FormValues, v, { shouldDirty: true })}
                   placeholder="Full name"
                   auto={autoFilled}
-                  ro={isReadOnly}
+                  ro={effectiveReadOnly}
                 />
               </FF>
               <FF label="Contract holder email *">
@@ -1197,7 +1251,7 @@ export function SesFormPanel({
                   onChange={(v) => setValue('contractHolderEmail', v, { shouldDirty: true })}
                   placeholder="email@tullow.com"
                   auto={autoFilled}
-                  ro={isReadOnly}
+                  ro={effectiveReadOnly}
                 />
               </FF>
               <FF label="Cost engineer">
@@ -1207,7 +1261,7 @@ export function SesFormPanel({
                   onChange={(v) => setValue('ceName', v, { shouldDirty: true })}
                   placeholder="Cost engineer name"
                   auto={autoFilled}
-                  ro={isReadOnly}
+                  ro={effectiveReadOnly}
                 />
               </FF>
               <FF label="Entered into SAP by">
@@ -1216,11 +1270,11 @@ export function SesFormPanel({
                   value={enteredBy}
                   onChange={(v) => setValue('enteredBy', v, { shouldDirty: true })}
                   placeholder="Name"
-                  ro={isReadOnly}
+                  ro={effectiveReadOnly}
                 />
               </FF>
               <FF label="Drive path" full>
-                <FI {...register('drivePath')} auto={autoFilled} placeholder="/CostEngineering/SES/2026/..." disabled={isReadOnly} />
+                <FI {...register('drivePath')} auto={autoFilled} placeholder="/CostEngineering/SES/2026/..." disabled={effectiveReadOnly} />
               </FF>
               <FF label={`Scope description * (${descWordCount}/${DESCRIPTION_MAX_WORDS} words)`} full>
                 <FTA
@@ -1228,7 +1282,7 @@ export function SesFormPanel({
                   auto={autoFilled}
                   rows={3}
                   placeholder="Scope of services rendered…"
-                  disabled={isReadOnly}
+                  disabled={effectiveReadOnly}
                   className={cn(descWordCount > DESCRIPTION_MAX_WORDS && 'border-red-400 focus:border-red-500')}
                   onKeyDown={(e) => {
                     if (descWordCount >= DESCRIPTION_MAX_WORDS) {
@@ -1244,10 +1298,10 @@ export function SesFormPanel({
                 )}
               </FF>
               <FF label="Period from" >
-                <FI {...register('periodFrom')} type="date" auto={autoFilled} disabled={isReadOnly} />
+                <FI {...register('periodFrom')} type="date" auto={autoFilled} disabled={effectiveReadOnly} />
               </FF>
               <FF label="Period to">
-                <FI {...register('periodTo')} type="date" auto={autoFilled} disabled={isReadOnly} />
+                <FI {...register('periodTo')} type="date" auto={autoFilled} disabled={effectiveReadOnly} />
               </FF>
             </div>
           </Card>
@@ -1273,7 +1327,7 @@ export function SesFormPanel({
               {visibleAtts.map((att, i) => (
                 <div
                   key={att.id}
-                  draggable={!isReadOnly}
+                  draggable={!effectiveReadOnly}
                   onDragStart={() => { dragAttIdx.current = i; }}
                   onDragOver={(e) => { e.preventDefault(); setDragOverIdx(i); }}
                   onDragLeave={() => setDragOverIdx(null)}
@@ -1281,16 +1335,16 @@ export function SesFormPanel({
                   onDragEnd={() => { dragAttIdx.current = null; setDragOverIdx(null); }}
                   className={cn(
                     'flex items-center gap-2 px-2.5 py-2 border rounded-lg text-[13px] transition-all',
-                    !isReadOnly && 'cursor-grab active:cursor-grabbing',
+                    !effectiveReadOnly && 'cursor-grab active:cursor-grabbing',
                     dragOverIdx === i
                       ? 'border-ce-navy bg-[#eff6ff] shadow-sm'
                       : 'bg-ce-bg border-ce-border',
                   )}
                 >
-                  <GripVertical size={14} className={cn('flex-shrink-0 transition-colors', isReadOnly ? 'text-ce-hint opacity-30' : 'text-ce-muted')} />
+                  <GripVertical size={14} className={cn('flex-shrink-0 transition-colors', effectiveReadOnly ? 'text-ce-hint opacity-30' : 'text-ce-muted')} />
                   <span className="text-red-500 text-sm flex-shrink-0">📄</span>
                   <span className="flex-1 text-ce-text truncate">{att.fileName}</span>
-                  {!isReadOnly && (
+                  {!effectiveReadOnly && (
                     <button
                       type="button"
                       onClick={() => removeAtt(att.id)}
@@ -1314,7 +1368,7 @@ export function SesFormPanel({
             </div>
 
             {/* Drop zone */}
-            {!isReadOnly && (
+            {!effectiveReadOnly && (
               <div className="border-[1.5px] border-dashed border-ce-border2 rounded-lg p-3.5 text-center cursor-pointer hover:border-ce-navy hover:bg-[#f0f5ff] transition-all mb-3">
                 <CloudUpload size={22} className="text-ce-hint mx-auto mb-1.5" />
                 <p className="text-[12px] text-ce-muted">Drag & drop or click to upload external files</p>
@@ -1331,7 +1385,7 @@ export function SesFormPanel({
                   className="flex-1 flex items-center justify-center gap-1.5 bg-ce-amber text-ce-navy3 border border-ce-amber rounded-lg py-2.5 px-3 text-[13px] font-medium hover:bg-ce-amber2 transition-colors disabled:opacity-60"
                 >
                   {isLastTab ? (
-                    <><Send size={13} /> {submit.isPending ? 'Submitting…' : 'Submit & send for approval'}</>
+                    <><Send size={13} /> {submit.isPending ? 'Submitting…' : workflow.status === 'returned' ? 'Re-submit for approval' : 'Submit & send for approval'}</>
                   ) : (
                     <><ChevronRight size={13} /> Save & proceed to Form {activeTab + 2}</>
                   )}

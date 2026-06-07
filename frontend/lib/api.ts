@@ -66,6 +66,7 @@ export const workflowsApi = {
   list:           () => apiFetch<{ workflows: Workflow[] }>('/api/workflows'),
   stats:          () => apiFetch<{ stats: WorkflowStats }>('/api/workflows/stats'),
   get:            (id: string) => apiFetch<{ workflow: Workflow }>(`/api/workflows/${id}`),
+  getChildren:    (id: string) => apiFetch<{ children: Workflow[] }>(`/api/workflows/${id}/children`),
   setStatus:      (id: string, status: string) => apiFetch<{ workflow: Workflow }>(`/api/workflows/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
   setCategory:    (id: string, category: string) => apiFetch<{ workflow: Workflow }>(`/api/workflows/${id}/category`, { method: 'PATCH', body: JSON.stringify({ category }) }),
   acquireLock:    (id: string) => apiFetch<{ message: string }>(`/api/workflows/${id}/lock`, { method: 'POST' }),
@@ -217,6 +218,24 @@ export const approvalApi = {
     apiFetch<{ message: string; workflowId: string }>(
       `/api/approval/${workflowId}/send-to-vendor`,
       { method: 'POST', body: JSON.stringify(params), timeoutMs: 180_000 }
+    ),
+
+  sendChild: (parentId: string, childId: string, params: { toRecipients: { name: string; address: string }[]; ccRecipients: { name: string; address: string }[]; body?: string }) =>
+    apiFetch<{ message: string }>(
+      `/api/approval/${parentId}/send-child/${childId}`,
+      { method: 'POST', body: JSON.stringify(params), timeoutMs: 180_000 }
+    ),
+
+  sendAllApproved: (parentId: string, params: { toRecipients: { name: string; address: string }[]; ccRecipients: { name: string; address: string }[]; body?: string }) =>
+    apiFetch<{ message: string; sent: number }>(
+      `/api/approval/${parentId}/send-all-approved`,
+      { method: 'POST', body: JSON.stringify(params), timeoutMs: 180_000 }
+    ),
+
+  complete: (parentId: string) =>
+    apiFetch<{ message: string }>(
+      `/api/approval/${parentId}/complete`,
+      { method: 'POST' }
     ),
 };
 

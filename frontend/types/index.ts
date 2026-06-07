@@ -62,6 +62,11 @@ export interface Workflow {
   lastReceivedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  // Child workflow fields (populated for split multi-SES workflows)
+  parentWorkflowId?: string | null;
+  subLabel?: string | null;
+  subIndex?: number | null;
+  hasDocument?: boolean;
 }
 
 export interface WorkflowStats {
@@ -180,6 +185,7 @@ export interface ApprovalPageData {
   sesDocuments: SesDocument[];
   events: ApprovalEvent[];
   lockedByUser: { name: string; email: string } | null;
+  children?: Workflow[];
 }
 
 // ── Tracker ───────────────────────────────────────────────────────────────────
