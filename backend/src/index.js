@@ -116,17 +116,32 @@ async function start() {
       )
     `).catch((err) => console.warn('[Boot] msal_token_cache table check failed:', err.message));
 
+    // Drop notifications table if it was created with wrong column types (SERIAL/INTEGER)
+    await pool.query(`
+      DO $$ BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'notifications' AND column_name = 'user_id' AND data_type = 'integer'
+        ) THEN DROP TABLE notifications; END IF;
+      END $$;
+    `).catch((err) => console.warn('[Boot] notifications schema fix failed:', err.message));
+
     await pool.query(`
       CREATE TABLE IF NOT EXISTS notifications (
-        id         SERIAL PRIMARY KEY,
-        user_id    INTEGER NOT NULL,
-        title      TEXT NOT NULL,
-        body       TEXT NOT NULL,
-        link       TEXT,
-        is_read    BOOLEAN NOT NULL DEFAULT FALSE,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        title       TEXT NOT NULL,
+        body        TEXT,
+        link        TEXT,
+        is_read     BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `).catch((err) => console.warn('[Boot] notifications table check failed:', err.message));
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id);
+      CREATE INDEX IF NOT EXISTS idx_notifications_is_read  ON notifications(user_id, is_read);
+    `).catch(() => {});
 
     startLockCleanupJob();
     startTrackerSyncJob();
