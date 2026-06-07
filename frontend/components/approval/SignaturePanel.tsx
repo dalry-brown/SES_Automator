@@ -222,11 +222,12 @@ export function SignaturePanel({
   const isActionable = ['pending_approval', 'queried'].includes(status);
 
   const isEditor = user?.role === 'editor' || user?.role === 'admin';
-  // Only the assigned CH (or admin) can sign/query/return/reroute
-  const isCH = user?.role === 'admin' ||
-    (user?.role === 'user' && workflow.contractHolderEmail === user.email);
-
-  const canAct = isActionable && hasMergedDoc && isCH;
+  // isAssignedCH: the only person who can sign (exact email match, no admin override)
+  const isAssignedCH = user?.role === 'user' && workflow.contractHolderEmail === user.email;
+  // isAdmin: can Return and Re-route but not sign
+  const isAdminUser = user?.role === 'admin';
+  // canAct: controls Return/Reroute visibility (CH or admin, but NOT editor-only role)
+  const canAct = isActionable && hasMergedDoc && (isAssignedCH || isAdminUser);
 
   const reset = () => {
     setActionMode('idle');
@@ -398,17 +399,23 @@ export function SignaturePanel({
       );
     }
 
-    // Queried — CH can still act; CE can reply
+    // Queried — assigned CH can sign/return/reroute; admin can return/reroute only; CE can reply
     if (status === 'queried') {
       return (
         <div className="space-y-3">
           {banner}
-          {canAct && (
+          {isAssignedCH && hasMergedDoc && (
             <div className="flex flex-col gap-2 pt-1">
               <ActionButton icon={<CheckCircle size={14} />} label="Approve & Sign" variant="success" onClick={() => setSigModalOpen(true)} disabled={!canSign} disabledTitle="Review all documents and make decisions before signing" />
               <ActionButton icon={<RotateCcw size={14} />} label="Return for Corrections" variant="warn" onClick={() => setActionMode('return')} />
               <ActionButton icon={<UserCheck size={14} />} label="Re-route signing" variant="ghost" onClick={() => setActionMode('reroute')} />
               <ActionButton icon={<MessageCircle size={14} />} label="Add comment" variant="ghost" onClick={() => setActionMode('comment')} />
+            </div>
+          )}
+          {isAdminUser && hasMergedDoc && (
+            <div className="flex flex-col gap-2 pt-1">
+              <ActionButton icon={<RotateCcw size={14} />} label="Return for Corrections" variant="warn" onClick={() => setActionMode('return')} />
+              <ActionButton icon={<UserCheck size={14} />} label="Re-route signing" variant="ghost" onClick={() => setActionMode('reroute')} />
             </div>
           )}
           {isEditor && isActionable && (
@@ -642,7 +649,8 @@ export function SignaturePanel({
   if (status === 'pending_approval' && actionMode === 'idle') {
     return (
       <div className="space-y-2">
-        {canAct ? (
+        {isAssignedCH ? (
+          // Assigned contract holder — full sign panel
           <>
             <div className="rounded-xl bg-blue-50 border border-blue-200 p-3 flex items-center gap-2">
               <Clock size={14} className="text-blue-400 flex-shrink-0" />
@@ -664,7 +672,21 @@ export function SignaturePanel({
             <ActionButton icon={<UserCheck size={14} />} label="Re-route signing" variant="ghost" onClick={() => setActionMode('reroute')} />
             <ActionButton icon={<Send size={14} />} label="Add comment only" variant="ghost" onClick={() => setActionMode('comment')} />
           </>
+        ) : isAdminUser && hasMergedDoc ? (
+          // Admin observer — Return and Re-route only, no signing
+          <>
+            <div className="rounded-xl bg-slate-50 border border-slate-200 p-3 flex items-center gap-2">
+              <Clock size={14} className="text-slate-400 flex-shrink-0" />
+              <p className="text-[12px] text-slate-600">
+                Awaiting signature from{' '}
+                <strong>{workflow.contractHolderName || workflow.contractHolderEmail || 'the contract holder'}</strong>.
+              </p>
+            </div>
+            <ActionButton icon={<RotateCcw size={14} />} label="Return for Corrections" variant="warn" onClick={() => setActionMode('return')} />
+            <ActionButton icon={<UserCheck size={14} />} label="Re-route signing" variant="ghost" onClick={() => setActionMode('reroute')} />
+          </>
         ) : (
+          // Observer (non-assigned user)
           <div className="rounded-xl bg-blue-50 border border-blue-200 p-4 flex items-start gap-3">
             <Clock className="h-5 w-5 flex-shrink-0 text-blue-400 mt-0.5" />
             <div>

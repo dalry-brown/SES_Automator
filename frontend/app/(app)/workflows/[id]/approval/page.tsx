@@ -188,6 +188,9 @@ export default function ApprovalPage() {
 
   const { workflow, mergedDoc, sesDocuments, events } = data;
 
+  // Only the exact assigned CH can make document decisions and sign
+  const isAssignedCH = user?.role === 'user' && workflow.contractHolderEmail === user?.email;
+
   // ── Per-document decision logic ────────────────────────────────────────────
   const hasSesDocuments = sesDocuments && sesDocuments.length > 0;
   const isMultiDoc      = hasSesDocuments && sesDocuments.length > 1;
@@ -332,7 +335,7 @@ export default function ApprovalPage() {
                     docLabel={`Form ${i + 1}`}
                     decision={decisions.get(i)}
                     onChange={(d) => setDecision(i, d)}
-                    disabled={!isChView && user?.role !== 'admin'}
+                    disabled={!isAssignedCH}
                   />
                 ))}
               </div>

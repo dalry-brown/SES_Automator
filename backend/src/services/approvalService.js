@@ -120,9 +120,8 @@ async function getApprovalPageData(workflowId, user) {
 async function signWorkflow(workflowId, user, body) {
   const workflow = await getWorkflowOrThrow(workflowId);
 
-  // Only the assigned contract holder (or admin) may sign
+  // Only the assigned contract holder may sign — admins cannot override this
   if (
-    user.role !== 'admin' &&
     workflow.contractHolderEmail &&
     workflow.contractHolderEmail !== user.email
   ) {
