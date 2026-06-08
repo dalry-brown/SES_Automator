@@ -120,7 +120,7 @@ async function _submitMultiTab(form, tabs, user) {
            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending_approval',NOW(),$10,$11,$12,NOW(),NOW())`,
           [
             childId,
-            parentWf.conversation_id,
+            null, // children share the parent's email thread — no separate conversation_id
             tab.vendorName    || parentWf.supplier_name,
             tab.invoiceNumber || null,
             tab.poNumber      || parentWf.po_number,
