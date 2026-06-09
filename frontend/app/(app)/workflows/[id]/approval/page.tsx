@@ -1,12 +1,13 @@
 'use client';
 
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { ArrowLeft, FileText, ExternalLink, CheckCircle, AlertCircle, XCircle, SkipForward, Send } from 'lucide-react';
 import { PageSpinner } from '@/components/ui/Spinner';
 import { StatusPill } from '@/components/ui/StatusPill';
 import { AuditTrail } from '@/components/approval/AuditTrail';
 import { SignaturePanel } from '@/components/approval/SignaturePanel';
+import { ParentApprovalView } from '@/components/approval/ParentApprovalView';
 import { useApprovalData } from '@/lib/hooks/useApproval';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { documentsApi, sesDocumentsApi, workflowsApi } from '@/lib/api';
@@ -162,7 +163,6 @@ export default function ApprovalPage() {
   const router       = useRouter();
   const searchParams = useSearchParams();
   const { effectiveRole, user } = useAuth();
-  const isChView = effectiveRole === 'user';
 
   const { data, isLoading, error, refetch } = useApprovalData(id);
   const [activeDocIdx, setActiveDocIdx]     = useState(0);
@@ -170,7 +170,6 @@ export default function ApprovalPage() {
   const [pdfRefreshKey, setPdfRefreshKey]   = useState(0);
   const hasMarkedRead = useRef(false);
 
-  // Auto-mark thread messages as read when the approval page is opened
   useEffect(() => {
     if (!id || hasMarkedRead.current) return;
     hasMarkedRead.current = true;
@@ -188,28 +187,82 @@ export default function ApprovalPage() {
   }
 
   const { workflow, mergedDoc, sesDocuments, events } = data;
+  const children = data.children ?? [];
+  const hasChildren = children.length > 0;
 
-  // Email match is the only criterion — any role can sign/act if they are the assigned CH
   const isAssignedCH = !!workflow.contractHolderEmail && workflow.contractHolderEmail === user?.email;
+  const isEditor     = user?.role === 'editor' || user?.role === 'admin';
 
-  // Editors who are NOT the assigned CH have no business on this page
-  if (user?.role === 'editor' && !isAssignedCH) {
+  // Editors can only access:
+  //   • Parent workflows (hasChildren) — they manage the branch overview
+  //   • Their own CH assignments
+  // Block editors from accessing other users' single-SES signing pages.
+  if (user?.role === 'editor' && !isAssignedCH && !hasChildren) {
     router.replace('/home');
     return <PageSpinner />;
   }
 
-  // ── Per-document decision logic ────────────────────────────────────────────
+  const backHref = searchParams.get('from') ?? inferBackHref(workflow.status);
+
+  // ── Common header ──────────────────────────────────────────────────────────
+  const header = (
+    <div className="border-b border-slate-200 bg-white px-4 py-3 flex-shrink-0">
+      <div className="flex items-center gap-3">
+        <button
+          onClick={() => router.push(backHref)}
+          className="flex-shrink-0 rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors"
+          title="Back"
+        >
+          <ArrowLeft className="h-4 w-4" />
+        </button>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <span className="font-mono text-sm font-bold text-slate-900">{workflow.id}</span>
+            <StatusPill status={workflow.status} />
+            {hasChildren && (
+              <span className="text-[11px] font-medium text-slate-500 bg-slate-100 border border-slate-200 rounded-full px-2 py-0.5">
+                {children.length} sub-workflow{children.length !== 1 ? 's' : ''}
+              </span>
+            )}
+          </div>
+          <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate-500">
+            {workflow.supplierName   && <span><span className="font-medium text-slate-700">Vendor:</span> {workflow.supplierName}</span>}
+            {workflow.invoiceNumber  && <span><span className="font-medium text-slate-700">Invoice:</span> {workflow.invoiceNumber}</span>}
+            {workflow.poNumber       && <span><span className="font-medium text-slate-700">PO:</span> {workflow.poNumber}</span>}
+            {workflow.amount != null && <span><span className="font-medium text-slate-700">Amount:</span> {formatCurrency(workflow.amount, workflow.currency)}</span>}
+            {workflow.contractHolderName && <span><span className="font-medium text-slate-700">CH:</span> {workflow.contractHolderName}</span>}
+            {workflow.submittedAt    && <span><span className="font-medium text-slate-700">Submitted:</span> {formatDate(workflow.submittedAt)}</span>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  // ── Parent workflow: show branches management view ─────────────────────────
+  if (hasChildren) {
+    return (
+      <div className="flex h-full flex-col overflow-hidden">
+        {header}
+        <div className="flex flex-1 overflow-hidden">
+          <ParentApprovalView
+            workflowId={workflow.id}
+            children={children}
+            events={events}
+            canEdit={isEditor}
+            onRefetch={refetch}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // ── Single-SES workflow: standard signing view ─────────────────────────────
   const hasSesDocuments = sesDocuments && sesDocuments.length > 0;
   const isMultiDoc      = hasSesDocuments && sesDocuments.length > 1;
   const isSignable      = ['pending_approval', 'queried'].includes(workflow.status);
 
-  // All docs must have a decision before signing; at least 1 must be 'approved'
-  const allDecided = isMultiDoc
-    ? sesDocuments.every((_, i) => decisions.has(i))
-    : true;
-  const anyApproved = isMultiDoc
-    ? Array.from(decisions.values()).some((d) => d.action === 'approved')
-    : true;
+  const allDecided = isMultiDoc ? sesDocuments.every((_, i) => decisions.has(i)) : true;
+  const anyApproved = isMultiDoc ? Array.from(decisions.values()).some((d) => d.action === 'approved') : true;
   const canSign = !isMultiDoc || (allDecided && anyApproved);
 
   const setDecision = (formIdx: number, d: DocDecision | undefined) => {
@@ -221,13 +274,10 @@ export default function ApprovalPage() {
     });
   };
 
-  // Which PDF to show in the viewer
   const activeSesDoc: SesDocument | undefined = hasSesDocuments ? sesDocuments[activeDocIdx] : undefined;
   const isApprovedOrSent = ['approved', 'sent'].includes(workflow.status);
   const pdfUrl = (() => {
-    // After signing, always show the signed merged doc (the signature is embedded there)
     if (isApprovedOrSent && mergedDoc?.storageKey) return documentsApi.sesDocUrl(workflow.id);
-    // Pre-signing: show the selected individual SES doc
     if (activeSesDoc) return sesDocumentsApi.previewUrl(activeSesDoc.id);
     if (mergedDoc?.storageKey) return documentsApi.sesDocUrl(workflow.id);
     return null;
@@ -245,11 +295,11 @@ export default function ApprovalPage() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      {/* Header */}
+      {/* Header (with optional document tabs for multi-doc single-SES) */}
       <div className="border-b border-slate-200 bg-white px-4 py-3 flex-shrink-0">
         <div className="flex items-center gap-3">
           <button
-            onClick={() => router.push(searchParams.get('from') ?? inferBackHref(workflow.status))}
+            onClick={() => router.push(backHref)}
             className="flex-shrink-0 rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors"
             title="Back"
           >
@@ -261,17 +311,16 @@ export default function ApprovalPage() {
               <StatusPill status={workflow.status} />
             </div>
             <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate-500">
-              {workflow.supplierName && <span><span className="font-medium text-slate-700">Vendor:</span> {workflow.supplierName}</span>}
-              {workflow.invoiceNumber && <span><span className="font-medium text-slate-700">Invoice:</span> {workflow.invoiceNumber}</span>}
-              {workflow.poNumber && <span><span className="font-medium text-slate-700">PO:</span> {workflow.poNumber}</span>}
+              {workflow.supplierName   && <span><span className="font-medium text-slate-700">Vendor:</span> {workflow.supplierName}</span>}
+              {workflow.invoiceNumber  && <span><span className="font-medium text-slate-700">Invoice:</span> {workflow.invoiceNumber}</span>}
+              {workflow.poNumber       && <span><span className="font-medium text-slate-700">PO:</span> {workflow.poNumber}</span>}
               {workflow.amount != null && <span><span className="font-medium text-slate-700">Amount:</span> {formatCurrency(workflow.amount, workflow.currency)}</span>}
               {workflow.contractHolderName && <span><span className="font-medium text-slate-700">CH:</span> {workflow.contractHolderName}</span>}
-              {workflow.submittedAt && <span><span className="font-medium text-slate-700">Submitted:</span> {formatDate(workflow.submittedAt)}</span>}
+              {workflow.submittedAt    && <span><span className="font-medium text-slate-700">Submitted:</span> {formatDate(workflow.submittedAt)}</span>}
             </div>
           </div>
         </div>
 
-        {/* Document tabs */}
         {hasSesDocuments && sesDocuments.length > 1 && (
           <div className="mt-3 flex gap-1 overflow-x-auto no-scrollbar">
             {sesDocuments.map((doc, i) => {
@@ -301,8 +350,6 @@ export default function ApprovalPage() {
       <div className="flex flex-1 overflow-hidden">
         {/* Left panel */}
         <div className="flex w-[300px] flex-shrink-0 flex-col border-r border-slate-200 bg-white overflow-y-auto">
-
-          {/* Invoice details */}
           <div className="border-b border-slate-100 px-5 py-4">
             <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Invoice details</p>
             <dl className="space-y-2">
@@ -322,7 +369,6 @@ export default function ApprovalPage() {
             </dl>
           </div>
 
-          {/* Document integrity */}
           {mergedDoc?.docHash && (
             <div className="border-b border-slate-100 px-5 py-3">
               <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Document integrity</p>
@@ -330,7 +376,6 @@ export default function ApprovalPage() {
             </div>
           )}
 
-          {/* Multi-doc decision checklist */}
           {isMultiDoc && isSignable && (
             <div className="border-b border-slate-100 px-5 py-4">
               <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Document decisions</p>
@@ -359,7 +404,6 @@ export default function ApprovalPage() {
             </div>
           )}
 
-          {/* Sign / action panel */}
           <div className="border-b border-slate-100 px-5 py-4">
             <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Action</p>
             <SignaturePanel
@@ -376,27 +420,18 @@ export default function ApprovalPage() {
             />
           </div>
 
-          {/* Audit trail */}
           <div className="flex-1 px-5 py-4">
             <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Activity</p>
             <AuditTrail events={events} />
           </div>
         </div>
 
-        {/* Right panel — PDF viewer */}
+        {/* Right panel */}
         <div className="flex flex-1 flex-col overflow-hidden">
           {pdfUrl ? (
-            <PdfFrame
-              url={pdfUrl}
-              label={pdfLabel}
-              refreshKey={pdfRefreshKey}
-            />
+            <PdfFrame url={pdfUrl} label={pdfLabel} refreshKey={pdfRefreshKey} />
           ) : mergedDoc?.storageKey ? (
-            <PdfFrame
-              url={documentsApi.sesDocUrl(workflow.id)}
-              label="Signed SES Document"
-              refreshKey={pdfRefreshKey}
-            />
+            <PdfFrame url={documentsApi.sesDocUrl(workflow.id)} label="Signed SES Document" refreshKey={pdfRefreshKey} />
           ) : (
             <NoPdfPlaceholder />
           )}

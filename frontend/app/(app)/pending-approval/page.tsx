@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
-import { Search, Edit, Send, FileText, ChevronRight, MessageCircle, AlertCircle, RotateCcw, UserCheck, GitBranch } from 'lucide-react';
+import { Search, Edit, Send, FileText, ChevronRight, MessageCircle, AlertCircle, RotateCcw, UserCheck } from 'lucide-react';
 import { useWorkflows } from '@/lib/hooks/useWorkflows';
 import { useApprovalMutations } from '@/lib/hooks/useApproval';
 import { useAuth } from '@/components/providers/AuthProvider';
@@ -13,7 +13,6 @@ import { PageSpinner } from '@/components/ui/Spinner';
 import { formatDate, formatDateTime, daysSince, cn } from '@/lib/utils';
 import { sesApi, approvalApi, workflowsApi } from '@/lib/api';
 import { ThreadView } from '@/components/ui/ThreadView';
-import { BranchesPanel } from '@/components/approval/BranchesPanel';
 import type { Workflow, SesForm, ApprovalEvent, ThreadMessage } from '@/types';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -79,18 +78,12 @@ function useWorkflowPanelData(workflowId: string) {
     queryFn:  () => workflowsApi.getMessages(workflowId),
     enabled:  !!workflowId,
   });
-  const childQ = useQuery({
-    queryKey: ['workflow-children', workflowId],
-    queryFn:  () => workflowsApi.getChildren(workflowId),
-    enabled:  !!workflowId,
-  });
   const messages: ThreadMessage[] = msgQ.data?.messages ?? [];
   return {
     sesForm: sesQ.data?.form ?? null,
     events: evQ.data?.events ?? [],
     firstMessage: messages[0] ?? null,
     messages,
-    childCount: childQ.data?.children?.length ?? 0,
     isLoading: sesQ.isLoading,
   };
 }
@@ -252,8 +245,8 @@ function ChSidePanel({ workflow }: { workflow: Workflow }) {
 // ── Editor side panel ──────────────────────────────────────────────────────────
 function EditorSidePanel({ workflow }: { workflow: Workflow }) {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<'details' | 'thread' | 'branches'>('details');
-  const { sesForm, events, firstMessage, messages, childCount, isLoading } = useWorkflowPanelData(workflow.id);
+  const [activeTab, setActiveTab] = useState<'details' | 'thread'>('details');
+  const { sesForm, events, firstMessage, messages, isLoading } = useWorkflowPanelData(workflow.id);
   const { reply: replyMutation } = useApprovalMutations(workflow.id);
   const { success: toastSuccess } = useToast();
   const [replyText, setReplyText] = useState('');
@@ -286,55 +279,32 @@ function EditorSidePanel({ workflow }: { workflow: Workflow }) {
 
       {/* Tab bar */}
       <div className="flex border-b border-ce-border flex-shrink-0 bg-white px-4">
-        <button
-          onClick={() => setActiveTab('details')}
-          className={cn(
-            'px-3 py-2 text-[12.5px] font-medium border-b-2 transition-colors',
-            activeTab === 'details' ? 'border-ce-navy text-ce-navy' : 'border-transparent text-ce-muted hover:text-ce-text',
-          )}
-        >
-          Details
-        </button>
-        <button
-          onClick={() => setActiveTab('thread')}
-          className={cn(
-            'px-3 py-2 text-[12.5px] font-medium border-b-2 transition-colors',
-            activeTab === 'thread' ? 'border-ce-navy text-ce-navy' : 'border-transparent text-ce-muted hover:text-ce-text',
-          )}
-        >
-          <span className="flex items-center gap-1">
-            Thread
-            {messages.length > 0 && (
-              <span className="bg-ce-navy/10 text-ce-navy text-[10px] font-bold px-1 rounded-full">
-                {messages.length}
-              </span>
-            )}
-          </span>
-        </button>
-        {childCount > 0 && (
+        {(['details', 'thread'] as const).map((tab) => (
           <button
-            onClick={() => setActiveTab('branches')}
+            key={tab}
+            onClick={() => setActiveTab(tab)}
             className={cn(
-              'px-3 py-2 text-[12.5px] font-medium border-b-2 transition-colors',
-              activeTab === 'branches' ? 'border-ce-navy text-ce-navy' : 'border-transparent text-ce-muted hover:text-ce-text',
+              'px-3 py-2 text-[12.5px] font-medium border-b-2 transition-colors capitalize',
+              activeTab === tab
+                ? 'border-ce-navy text-ce-navy'
+                : 'border-transparent text-ce-muted hover:text-ce-text',
             )}
           >
-            <span className="flex items-center gap-1">
-              <GitBranch size={12} />
-              Branches
-              <span className="bg-ce-navy/10 text-ce-navy text-[10px] font-bold px-1 rounded-full">
-                {childCount}
+            {tab === 'thread' ? (
+              <span className="flex items-center gap-1">
+                Thread
+                {messages.length > 0 && (
+                  <span className="bg-ce-navy/10 text-ce-navy text-[10px] font-bold px-1 rounded-full">
+                    {messages.length}
+                  </span>
+                )}
               </span>
-            </span>
+            ) : 'Details'}
           </button>
-        )}
+        ))}
       </div>
 
-      {activeTab === 'branches' ? (
-        <div className="flex-1 overflow-y-auto">
-          <BranchesPanel workflow={workflow} />
-        </div>
-      ) : activeTab === 'thread' ? (
+      {activeTab === 'thread' ? (
         <ThreadView messages={messages} workflowId={workflow.id} canReply />
       ) : (
         <>
